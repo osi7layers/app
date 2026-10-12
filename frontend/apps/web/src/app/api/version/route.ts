@@ -8,7 +8,7 @@ export function GET() {
   return Response.json(
     {
       // 빌드 시 Dockerfile ARG로 주입된 git SHA (실행 중에는 바뀌지 않음)
-      version: process.env.NEXT_PUBLIC_APP_VERSION ?? 'dev',
+      version: process.env.NEXT_PUBLIC_APP_VERSION ?? 'unknown',
       // k8s에서는 hostname이 파드 이름과 같아서 downward API 없이도 충분하다
       pod: process.env.POD_NAME ?? os.hostname(),
       env: process.env.APP_ENV ?? 'local', // onprem | aws
