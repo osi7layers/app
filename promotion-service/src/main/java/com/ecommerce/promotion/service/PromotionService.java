@@ -54,6 +54,7 @@ public class PromotionService {
                 .startDate(promotionPostVm.getStartDate().toInstant())
                 .endDate(promotionPostVm.getEndDate().toInstant())
                 .minimumOrderPurchaseAmount(promotionPostVm.getMinimumOrderPurchaseAmount())
+                .issueLimit(promotionPostVm.getIssueLimit())
                 .build();
 
         List<PromotionApply> promotionApplies =
