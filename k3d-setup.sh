@@ -322,8 +322,8 @@ success "ConfigMaps applied"
 step_done
 
 # 8. Infrastructure — fire-and-forget: apply everything, let Kubernetes converge on
-# its own. Pod ordering is handled by the pods (Keycloak + backends carry
-# wait-for-postgres initContainers), so we do NOT block on readiness.
+# its own. Pod ordering is handled by the pods (Keycloak waits for Postgres,
+# backends wait for MySQL), so we do NOT block on readiness.
 step "Deploy infrastructure"
 for f in postgres mysql redis elasticsearch rustfs keycloak; do
   kubectl apply -f "k8s/infra/${f}.yaml" > /dev/null

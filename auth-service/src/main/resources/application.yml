@@ -17,8 +17,8 @@ spring:
     locale-resolver: accept-header
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/authservice}
-    username: ${POSTGRES_USER:admin}
-    password: ${POSTGRES_PASSWORD:admin}
+    username: ${MYSQL_USER:admin}
+    password: ${MYSQL_PASSWORD:admin}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
