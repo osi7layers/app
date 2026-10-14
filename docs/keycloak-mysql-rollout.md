@@ -6,7 +6,7 @@
 - Mọi service backend chạy chế độ `oauth2-resource-server`.
 - Bearer token được lấy từ Keycloak và gửi qua API Gateway.
 - Gateway relay header `Authorization` xuống các service phía sau.
-- Các service JPA và Keycloak dùng MySQL 8.0 (`utf8mb4`). Keycloak dùng database `keycloak` riêng. Schema của Keycloak do chính Keycloak tạo trên database trống, không nhập schema PostgreSQL cũ.
+- Các service JPA và Keycloak dùng MySQL 8.0 (`utf8mb4`). Keycloak dùng database `keycloak` riêng, tạo schema trên database trống rồi import file realm.
 
 ## 2) Required environment variables
 
