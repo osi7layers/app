@@ -1,11 +1,13 @@
 package com.ecommerce.orderservice.service;
 
 import com.ecommerce.commonlib.exception.BusinessException;
+import com.ecommerce.commonlib.viewmodel.ApiResponse;
 import com.ecommerce.orderservice.dto.product.ProductDto;
 import com.ecommerce.orderservice.dto.promotion.PromotionReleaseCall;
 import com.ecommerce.orderservice.dto.promotion.PromotionUseCall;
 import com.ecommerce.orderservice.dto.promotion.UnusedPromotionIssueResponse;
 import com.ecommerce.orderservice.dto.user.UserDto;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
@@ -35,20 +37,18 @@ public class CallAPI {
     }
 
     public ProductDto receiverProductDto(Integer productId) {
-        return productClient
-                .get()
-                .uri("/api/products/{id}", productId)
-                .retrieve()
-                .body(ProductDto.class);
+        return receiverProductDto(productId, null);
     }
 
     public ProductDto receiverProductDto(Integer productId, String authorization) {
-        return productClient
+        ApiResponse<ProductDto> response = productClient
                 .get()
                 .uri("/product/api/products/{id}", productId)
                 .headers(headers -> applyAuthorization(headers, authorization))
                 .retrieve()
-                .body(ProductDto.class);
+                .body(new ParameterizedTypeReference<ApiResponse<ProductDto>>() {
+                });
+        return response == null ? null : response.data();
     }
 
     public UnusedPromotionIssueResponse unusedPromotionIssue(Long promotionId, String authorization) {
