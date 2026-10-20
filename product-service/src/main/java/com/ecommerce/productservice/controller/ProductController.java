@@ -1,5 +1,6 @@
 package com.ecommerce.productservice.controller;
 
+import com.ecommerce.commonlib.viewmodel.ApiResponse;
 import com.ecommerce.productservice.dto.ProductDto;
 import com.ecommerce.productservice.service.ProductService;
 import jakarta.validation.Valid;
@@ -29,11 +30,11 @@ public class ProductController {
     }
 
     @GetMapping("/{productId}")
-    public ResponseEntity<ProductDto> findById(@PathVariable("productId")
-                                               @NotBlank(message = "Input must not be blank!")
-                                               @Valid final String productId) {
+    public ResponseEntity<ApiResponse<ProductDto>> findById(@PathVariable("productId")
+                                                            @NotBlank(message = "Input must not be blank!")
+                                                            @Valid final String productId) {
         log.info("ProductDto, resource; fetch product by id");
-        return ResponseEntity.ok(productService.findById(Integer.parseInt(productId)));
+        return ResponseEntity.ok(ApiResponse.ok(productService.findById(Integer.parseInt(productId))));
     }
 
     @PostMapping
