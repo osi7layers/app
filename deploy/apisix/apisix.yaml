@@ -60,7 +60,7 @@ global_rules:
       allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
       allow_headers: Authorization,Content-Type,X-Requested-With
       max_age: 3600
-    # Count per client IP and bearer token, so many signed-in users behind one IP
+    # Per client IP and bearer token, so many signed-in users behind one IP
     # (a load test machine, a NAT) each get their own 1200/min; anonymous calls stay per IP.
     limit-count:
       count: 1200
@@ -68,6 +68,17 @@ global_rules:
       rejected_code: 429
       key_type: var_combination
       key: $remote_addr $http_authorization
+      policy: local
+# Global rules run before route auth, so the Authorization header above is unverified.
+# This per-IP ceiling stops a client from dodging the limit by sending a new header each time.
+- id: 2
+  plugins:
+    limit-count:
+      count: 12000
+      time_window: 60
+      rejected_code: 429
+      key_type: var
+      key: remote_addr
       policy: local
 routes:
 - id: auth-public
