@@ -40,7 +40,7 @@ public class ProductServiceImpl implements ProductService {
         log.info("ProductDto, service; fetch product by id");
         return productRepository.findById(productId)
                 .map(ProductMappingHelper::map)
-                .orElseThrow(() -> BusinessException.notFound("product.not.found", productId));
+                .orElseThrow(() -> BusinessException.notFound("product.not.found", String.valueOf(productId)));
     }
 
     @Override
@@ -61,7 +61,7 @@ public class ProductServiceImpl implements ProductService {
     public ProductDto update(ProductDto productDto) {
         log.info("ProductDto, service; update product");
         Product existingProduct = productRepository.findById(productDto.getProductId())
-                .orElseThrow(() -> BusinessException.notFound("product.not.found", productDto.getProductId()));
+                .orElseThrow(() -> BusinessException.notFound("product.not.found", String.valueOf(productDto.getProductId())));
         BeanUtils.copyProperties(productDto, existingProduct, "productId", "categoryDto");
         if (productDto.getCategoryDto() != null) {
             existingProduct.setCategory(CategoryMappingHelper.map(productDto.getCategoryDto()));
@@ -73,7 +73,7 @@ public class ProductServiceImpl implements ProductService {
     public ProductDto update(Integer productId, ProductDto productDto) {
         log.info("ProductDto, service; update product with productId");
         Product existingProduct = productRepository.findById(productId)
-                .orElseThrow(() -> BusinessException.notFound("product.not.found", productId));
+                .orElseThrow(() -> BusinessException.notFound("product.not.found", String.valueOf(productId)));
         BeanUtils.copyProperties(productDto, existingProduct, "productId", "category");
         if (productDto.getCategoryDto() != null) {
             existingProduct.setCategory(CategoryMappingHelper.map(productDto.getCategoryDto()));

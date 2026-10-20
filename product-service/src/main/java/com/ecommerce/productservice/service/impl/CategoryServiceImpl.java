@@ -138,7 +138,7 @@ public class CategoryServiceImpl implements CategoryService {
             categoryRepository.deleteById(categoryId);
         } catch (DataIntegrityViolationException e) {
             // Products still reference this category; deleting it must not take the products with it.
-            throw BusinessException.conflict("product.category.has.products", categoryId);
+            throw BusinessException.conflict("product.category.has.products", String.valueOf(categoryId));
         } catch (Exception e) {
             log.error("Error deleting category", e);
             throw new CategoryNotFoundException("Error deleting category", e);
