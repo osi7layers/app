@@ -1,20 +1,16 @@
 package com.ecommerce.orderservice.service;
 
 import com.ecommerce.commonlib.exception.BusinessException;
-import com.ecommerce.orderservice.dto.inventory.InventoryStockDto;
 import com.ecommerce.orderservice.dto.product.ProductDto;
 import com.ecommerce.orderservice.dto.promotion.PromotionReleaseCall;
 import com.ecommerce.orderservice.dto.promotion.PromotionUseCall;
 import com.ecommerce.orderservice.dto.promotion.UnusedPromotionIssueResponse;
 import com.ecommerce.orderservice.dto.user.UserDto;
 import lombok.RequiredArgsConstructor;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-
-import java.util.List;
 
 @Component
 @RequiredArgsConstructor
@@ -46,20 +42,6 @@ public class CallAPI {
                 .headers(headers -> applyAuthorization(headers, authorization))
                 .retrieve()
                 .body(ProductDto.class);
-    }
-
-    public List<InventoryStockDto> receiverInventory(String productName, String authorization) {
-        List<InventoryStockDto> stocks = restClientBuilder.baseUrl("http://inventory-service:8082").build()
-                .get()
-                .uri(uriBuilder -> uriBuilder
-                        .path("/inventory/api/inventory")
-                        .queryParam("productName", productName)
-                        .build())
-                .headers(headers -> applyAuthorization(headers, authorization))
-                .retrieve()
-                .body(new ParameterizedTypeReference<>() {
-                });
-        return stocks == null ? List.of() : stocks;
     }
 
     public UnusedPromotionIssueResponse unusedPromotionIssue(Long promotionId, String authorization) {
