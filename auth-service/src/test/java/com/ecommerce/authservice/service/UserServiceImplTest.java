@@ -19,8 +19,10 @@ import org.modelmapper.ModelMapper;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.security.oauth2.jwt.Jwt;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -138,5 +140,41 @@ class UserServiceImplTest {
 
         verify(keycloakAuthClient).createUser("newuser", "new@test.com", null, "password", List.of("USER"));
         assertEquals(Set.of(userRole), saved.getRoles());
+    }
+
+    @Test
+    void findOrCreateByJwtShouldReturnExistingUser() {
+        User existing = new User();
+        existing.setKeycloakUserId("kc-id");
+        when(userRepository.findByKeycloakUserId("kc-id")).thenReturn(Optional.of(existing));
+
+        assertSame(existing, userService.findOrCreateByJwt(jwt("kc-id", List.of("USER"))));
+        verify(userRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void findOrCreateByJwtShouldCreateUserWithRealmRoles() {
+        Role adminRole = new Role();
+        adminRole.setName(RoleName.ADMIN);
+        when(userRepository.findByKeycloakUserId("kc-id")).thenReturn(Optional.empty());
+        when(roleService.findByName(RoleName.ADMIN)).thenReturn(Optional.of(adminRole));
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        User created = userService.findOrCreateByJwt(jwt("kc-id", List.of("ADMIN", "default-roles-ecommerce")));
+
+        assertEquals("kc-id", created.getKeycloakUserId());
+        assertEquals("adminuser", created.getUsername());
+        assertEquals("adminuser@local.dev", created.getEmail());
+        assertEquals(Set.of(adminRole), created.getRoles());
+    }
+
+    private static Jwt jwt(String subject, List<String> realmRoles) {
+        return Jwt.withTokenValue("token")
+                .header("alg", "none")
+                .subject(subject)
+                .claim("preferred_username", "adminuser")
+                .claim("email", "adminuser@local.dev")
+                .claim("realm_access", Map.of("roles", realmRoles))
+                .build();
     }
 }

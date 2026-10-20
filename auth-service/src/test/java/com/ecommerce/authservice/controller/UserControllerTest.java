@@ -104,7 +104,7 @@ class UserControllerTest {
     }
 
     @Test
-    void getCurrentUserShouldLookUpByKeycloakSubject() {
+    void getCurrentUserShouldResolveUserFromJwt() {
         User user = new User();
         user.setUsername("testuser");
         Jwt jwt = Jwt.withTokenValue("token")
@@ -113,7 +113,7 @@ class UserControllerTest {
                 .claim("preferred_username", "testuser")
                 .build();
 
-        when(userService.findByKeycloakUserId("6f1c2a4e-keycloak-uuid")).thenReturn(user);
+        when(userService.findOrCreateByJwt(jwt)).thenReturn(user);
 
         ApiResponse<UserResponse> response = userController.getCurrentUser(jwt);
 

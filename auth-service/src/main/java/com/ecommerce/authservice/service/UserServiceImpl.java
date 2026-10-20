@@ -15,12 +15,18 @@ import com.ecommerce.commonlib.logging.LogPerformance;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -30,6 +36,9 @@ public class UserServiceImpl implements UserService {
 
     // Self sign-up always gets USER; roles in the request are ignored so nobody can sign up as ADMIN.
     private static final List<String> SIGNUP_ROLES = List.of("USER");
+    private static final String UNKNOWN_GENDER = "UNKNOWN";
+    // users.email is NOT NULL; .invalid is a reserved TLD, so the placeholder never reaches a real inbox.
+    private static final String NO_EMAIL_DOMAIN = "@local.invalid";
 
     private final UserRepository userRepository;
     private final UserMapper userMapper;
@@ -127,9 +136,43 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public User findByKeycloakUserId(String keycloakUserId) {
-        return userRepository.findByKeycloakUserId(keycloakUserId)
-                .orElseThrow(() -> BusinessException.notFound("auth.user.not.found"));
+    public User findOrCreateByJwt(Jwt jwt) {
+        return userRepository.findByKeycloakUserId(jwt.getSubject())
+                .orElseGet(() -> createFromJwt(jwt));
+    }
+
+    // Users created outside the sign-up API (realm seed accounts, Keycloak console) have no local row yet.
+    private User createFromJwt(Jwt jwt) {
+        String keycloakUserId = jwt.getSubject();
+        String username = Optional.ofNullable(jwt.getClaimAsString("preferred_username")).orElse(keycloakUserId);
+        User user = new User();
+        user.setKeycloakUserId(keycloakUserId);
+        user.setUsername(username);
+        user.setEmail(Optional.ofNullable(jwt.getClaimAsString("email")).orElse(keycloakUserId + NO_EMAIL_DOMAIN));
+        user.setFullName(jwt.getClaimAsString("name"));
+        user.setGender(UNKNOWN_GENDER);
+        user.setRoles(realmRoles(jwt).stream()
+                .map(roleName -> roleService.findByName(roleName)
+                        .orElseThrow(() -> BusinessException.notFound("auth.role.not.found.in.database", roleName)))
+                .collect(Collectors.toSet()));
+        try {
+            return userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException ex) {
+            // A concurrent /me call for the same user may have inserted the row first.
+            return userRepository.findByKeycloakUserId(keycloakUserId)
+                    .orElseThrow(() -> BusinessException.conflict("auth.username.exists", username));
+        }
+    }
+
+    private static Set<RoleName> realmRoles(Jwt jwt) {
+        Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
+        Object roles = realmAccess == null ? null : realmAccess.get("roles");
+        Set<RoleName> roleNames = roles instanceof Collection<?> values
+                ? Arrays.stream(RoleName.values())
+                        .filter(roleName -> values.contains(roleName.name()))
+                        .collect(Collectors.toSet())
+                : Set.of();
+        return roleNames.isEmpty() ? Set.of(RoleName.USER) : roleNames;
     }
 
     @Override
