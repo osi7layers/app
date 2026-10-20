@@ -320,7 +320,9 @@ routes:
       token_signing_alg_values_expected: RS256
 - id: promotion-backoffice
   upstream_id: 12
-  uri: /promotion/backoffice/promotions/*
+  uris:
+  - /promotion/backoffice/promotions
+  - /promotion/backoffice/promotions/*
   plugins:
     openid-connect:
       client_id: ecommerce-client
