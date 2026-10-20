@@ -28,6 +28,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
 
+    // Self sign-up always gets USER; roles in the request are ignored so nobody can sign up as ADMIN.
+    private static final List<String> SIGNUP_ROLES = List.of("USER");
+
     private final UserRepository userRepository;
     private final UserMapper userMapper;
     private final RoleService roleService;
@@ -47,7 +50,7 @@ public class UserServiceImpl implements UserService {
             throw BusinessException.conflict("auth.phone.exists", request.getPhone());
         }
 
-        List<String> requestedRoles = normalizeRequestedRoles(request.getRoles());
+        List<String> requestedRoles = SIGNUP_ROLES;
         String keycloakUserId = keycloakAuthClient.createUser(
                 request.getUsername(),
                 request.getEmail(),
@@ -130,13 +133,6 @@ public class UserServiceImpl implements UserService {
         PageRequest pageRequest = PageRequest.of(page, size, sort);
         Page<User> usersPage = userRepository.findAll(pageRequest);
         return usersPage.map(userMapper::toResponse);
-    }
-
-    private List<String> normalizeRequestedRoles(Set<String> roles) {
-        if (roles == null || roles.isEmpty()) {
-            return List.of("USER");
-        }
-        return roles.stream().map(String::trim).filter(value -> !value.isBlank()).toList();
     }
 
     public boolean existsByUsername(String username) {
