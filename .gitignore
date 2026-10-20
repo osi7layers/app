@@ -71,3 +71,6 @@ files
 ### Flatten-maven-plugin ###
 **/.flattened-pom.xml
 .flattened-pom.xml
+
+# Local environment (copy .env.example to .env)
+.env
