@@ -127,6 +127,12 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public User findByKeycloakUserId(String keycloakUserId) {
+        return userRepository.findByKeycloakUserId(keycloakUserId)
+                .orElseThrow(() -> BusinessException.notFound("auth.user.not.found"));
+    }
+
+    @Override
     @LogPerformance(title = "list users")
     public Page<UserResponse> findAllUsers(int page, int size, String sortBy, String sortOrder) {
         Sort sort = Sort.by(Sort.Direction.fromString(sortOrder), sortBy);

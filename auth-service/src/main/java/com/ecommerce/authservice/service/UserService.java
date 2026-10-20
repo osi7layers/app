@@ -20,5 +20,7 @@ public interface UserService {
 
     User findByUsername(String userName);
 
+    User findByKeycloakUserId(String keycloakUserId);
+
     Page<UserResponse> findAllUsers(int page, int size, String sortBy, String sortOrder);
 }
