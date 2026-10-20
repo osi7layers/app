@@ -14,7 +14,7 @@
 |---|---|
 | `d7b6800` | **auth-service** SSO 로그인의 `state`와 `ticket`을 메모리(`ConcurrentHashMap`) 대신 MySQL `sso_handshake` 테이블에 저장. `/login`, `/callback`, `/session`이 서로 다른 replica나 클라우드로 가도 로그인이 이어짐. 꺼낼 때 행 잠금 후 삭제하므로 한 번만 사용 가능. 만료 행은 새 항목을 만들 때 정리 |
 | `ee8e7f7` | **common-lib** 요청 로그(`HttpLoggingFilter`)의 본문과 쿼리스트링에서 비밀번호, access/refresh/id token, client secret, ticket, OAuth `code`/`state`를 `***`로 마스킹 (`SensitiveDataMasker`). 가입 API의 `@LogPerformance(logInput = true)` 제거 |
-| `8f72e94` | `.env`를 git 추적에서 제외하고 `.env.example`(값은 `change-me`) 추가. `k8s/secrets.yaml`, `k8s/gateway/01-global-rule.yaml`의 평문 비밀번호를 `change-me`로 교체 |
+| `8f72e94` | `k8s/secrets.yaml`, `k8s/gateway/01-global-rule.yaml`의 평문 비밀번호를 `change-me`로 교체. 함께 넣었던 `.env` 추적 제외와 `.env.example` 추가는 `2730c24`에서 되돌림 (`.env`는 계속 추적하기로 결정) |
 | `b3a27ac` | Dockerfile 12개의 베이스 이미지를 `ARG BASE_IMAGE`(기본값 `eclipse-temurin:21-jre-alpine`)로 변경. Harbor 미러 등 다른 레지스트리 이미지로 빌드 가능 |
 | `a290acc` | **product-service** 카테고리 ID 경로 변수를 `Integer`로 받아 잘못된 형식은 400, 없는 카테고리는 404 (`product.category.not.found`) |
 | `520c211` | **order-service** 존재하지 않는 경로를 호출하고 예외를 무시하던 `CallAPI.receiverUserDto`와 장바구니의 호출 3곳 제거 |
@@ -42,8 +42,7 @@ Liquibase changeset `auth-mysql-ddl-0002`가 기동 시 자동으로 만든다. 
 
 ## 배포 시 주의
 
-- **`.env` 백업**: 이 브랜치를 pull하면 팀원 로컬의 `.env`가 삭제될 수 있다. pull 전에 백업하고, 없으면 `.env.example`을 복사해 값을 채운다.
-- **이력에 남은 비밀번호**: 그동안 레포에 올라갔던 `.env`의 비밀번호 6개(MySQL, Redis, Keycloak admin, 스토리지 키)는 모두 원본 프로젝트의 로컬 개발 기본값 `admin`이다. 실제 환경이 이 값을 그대로 쓰고 있다면 바꿔야 한다.
+- **`.env`**: 로컬 개발용으로 계속 git에 추적한다. 비밀번호 6개(MySQL, Redis, Keycloak admin, 스토리지 키)는 모두 원본 프로젝트의 기본값 `admin`이므로, 실제 환경에서는 이 값을 쓰지 말고 gitops Secret 값을 사용한다.
 - **Liquibase 동시 기동**: 빈 DB에 replica 여러 개가 동시에 처음 뜨면 `DATABASECHANGELOG` 생성이 겹쳐 하나가 실패할 수 있다 (이 브랜치 이전부터 있던 문제). 실패한 pod는 재시작하면 정상 기동한다. 최초 배포는 replica 1개로 올린 뒤 늘리는 것을 권장.
 
 ## gitops 반영 항목
