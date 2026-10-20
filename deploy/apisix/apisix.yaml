@@ -62,7 +62,16 @@ global_rules:
       max_age: 3600
     # Per client IP and bearer token, so many signed-in users behind one IP
     # (a load test machine, a NAT) each get their own 1200/min; anonymous calls stay per IP.
+    # The QA load generator (OCI qa-01) is exempt from both limits.
     limit-count:
+      _meta:
+        filter:
+        -
+          - remote_addr
+          - "!"
+          - ipmatch
+          -
+            - 10.0.1.99/32
       count: 1200
       time_window: 60
       rejected_code: 429
@@ -74,6 +83,14 @@ global_rules:
 - id: 2
   plugins:
     limit-count:
+      _meta:
+        filter:
+        -
+          - remote_addr
+          - "!"
+          - ipmatch
+          -
+            - 10.0.1.99/32
       count: 12000
       time_window: 60
       rejected_code: 429
