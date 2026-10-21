@@ -2,15 +2,19 @@ package com.ecommerce.promotion.service;
 
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiPredicate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
@@ -20,6 +24,8 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>{@code coupon:{id}:stock} — coupons still left</li>
  *   <li>{@code coupon:{id}:users} — ids of users who already claimed one</li>
+ *   <li>{@code coupon:{id}:pending} — claims whose MySQL row is not confirmed yet, with the
+ *       claim time</li>
  * </ul>
  * The {@code {id}} hash tag keeps both keys in one slot, so a script can touch them together
  * on a Redis Cluster too.
@@ -56,6 +62,14 @@ public class CouponStockStore {
         return "coupon:{" + promotionId + "}:users";
     }
 
+    static String pendingKey(Long promotionId) {
+        return "coupon:{" + promotionId + "}:pending";
+    }
+
+    private static List<String> claimKeys(Long promotionId) {
+        return List.of(stockKey(promotionId), usersKey(promotionId), pendingKey(promotionId));
+    }
+
     private static String loadLockKey(Long promotionId) {
         return "coupon:{" + promotionId + "}:loading";
     }
@@ -70,7 +84,8 @@ public class CouponStockStore {
 
     /** Takes one coupon for the user if any are left and the user has none yet. */
     public ClaimResult tryClaim(Long promotionId, String userId) {
-        Long result = redis.execute(CLAIM, List.of(stockKey(promotionId), usersKey(promotionId)), userId);
+        Long result = redis.execute(CLAIM, claimKeys(promotionId), userId,
+                String.valueOf(Instant.now().toEpochMilli()));
         return switch (result == null ? -1 : result.intValue()) {
             case 0 -> ClaimResult.CLAIMED;
             case 1 -> ClaimResult.SOLD_OUT;
@@ -79,14 +94,52 @@ public class CouponStockStore {
         };
     }
 
+    /** The claim's MySQL row is written: it no longer needs to be checked. */
+    public void confirmClaim(Long promotionId, String userId) {
+        redis.opsForHash().delete(pendingKey(promotionId), userId);
+    }
+
     /**
      * Undoes {@link #tryClaim} after the MySQL write failed.
      *
      * @param forgetUser false when MySQL already holds this user's coupon, so they stay a claimer
      */
     public void undoClaim(Long promotionId, String userId, boolean forgetUser) {
-        redis.execute(UNCLAIM, List.of(stockKey(promotionId), usersKey(promotionId)),
-                userId, forgetUser ? "1" : "0");
+        redis.execute(UNCLAIM, claimKeys(promotionId), userId, forgetUser ? "1" : "0");
+    }
+
+    /**
+     * Settles claims still pending after {@code olderThan}: confirmed if MySQL has the row,
+     * given back if not. Such a claim is left behind when the caller stopped waiting for
+     * Redis (timeout) after the script had already run, or the pod died before writing.
+     *
+     * @param issuedInMysql (promotion id, user id) → whether the issue row exists
+     * @return number of claims given back
+     */
+    public int settleStaleClaims(Duration olderThan, BiPredicate<Long, String> issuedInMysql) {
+        long cutoff = Instant.now().minus(olderThan).toEpochMilli();
+        int givenBack = 0;
+        ScanOptions pattern = ScanOptions.scanOptions().match("coupon:{*}:pending").count(100).build();
+        try (Cursor<String> keys = redis.scan(pattern)) {
+            while (keys.hasNext()) {
+                String key = keys.next();
+                Long promotionId = Long.valueOf(key.substring(key.indexOf('{') + 1, key.indexOf('}')));
+                for (Map.Entry<Object, Object> claim : redis.opsForHash().entries(key).entrySet()) {
+                    String userId = (String) claim.getKey();
+                    if (Long.parseLong((String) claim.getValue()) > cutoff) {
+                        continue;
+                    }
+                    if (issuedInMysql.test(promotionId, userId)) {
+                        confirmClaim(promotionId, userId);
+                    } else {
+                        undoClaim(promotionId, userId, true);
+                        givenBack++;
+                        log.warn("Gave back coupon {} claimed by {}: no issue row after {}", promotionId, userId, olderThan);
+                    }
+                }
+            }
+        }
+        return givenBack;
     }
 
     /**
@@ -116,7 +169,7 @@ public class CouponStockStore {
 
     /** Removes a coupon's keys, e.g. after the promotion is deleted. */
     public void evict(Long promotionId) {
-        redis.delete(List.of(stockKey(promotionId), usersKey(promotionId)));
+        redis.delete(claimKeys(promotionId));
     }
 
     /**
@@ -152,7 +205,7 @@ public class CouponStockStore {
         List<String> userIds = promotionIssueRepository.findUserIdsByPromotionId(promotionId);
         // Claimers first, stock last: until stock exists every claim asks for a reload,
         // so nobody is admitted against a half-built claimer set.
-        redis.delete(usersKey(promotionId));
+        redis.delete(List.of(usersKey(promotionId), pendingKey(promotionId)));
         for (int from = 0; from < userIds.size(); from += LOAD_BATCH) {
             List<String> batch = userIds.subList(from, Math.min(from + LOAD_BATCH, userIds.size()));
             redis.opsForSet().add(usersKey(promotionId), batch.toArray(String[]::new));

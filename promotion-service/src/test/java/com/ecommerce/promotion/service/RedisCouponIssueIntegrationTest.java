@@ -14,6 +14,7 @@ import com.ecommerce.promotion.model.enumeration.UsageType;
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import com.ecommerce.promotion.repository.PromotionRepository;
 import com.ecommerce.promotion.viewmodel.StorefrontCouponVm;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -44,7 +45,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest(properties = {
         "promotion.issue.store=redis",
         // the test calls the synchronizer itself
-        "promotion.issue.count-sync-interval=1h"
+        "promotion.issue.count-sync-interval=1h",
+        // the tests settle stale claims themselves, with their own age
+        "promotion.issue.stale-claim-after=1h"
 })
 @Testcontainers(disabledWithoutDocker = true)
 class RedisCouponIssueIntegrationTest {
@@ -127,6 +130,51 @@ class RedisCouponIssueIntegrationTest {
         assertEquals("5", stock(coupon));
         assertTrue(Boolean.TRUE.equals(
                 redisTemplate.opsForSet().isMember(CouponStockStore.usersKey(coupon.getId()), "x")));
+    }
+
+    @Test
+    void claimWithoutMysqlRowIsGivenBack() {
+        Promotion coupon = openCoupon(5);
+        assertTrue(couponStockStore.loadIfAbsent(coupon.getId(), 5));
+        // What a Redis timeout leaves behind: the script ran, the caller gave up before MySQL.
+        assertEquals(CouponStockStore.ClaimResult.CLAIMED, couponStockStore.tryClaim(coupon.getId(), "ghost"));
+        assertEquals("PRM-6003", claim(coupon.getId(), "ghost"));
+        assertEquals("4", stock(coupon));
+
+        // Other tests' claims share this Redis, so check this coupon rather than the returned count.
+        couponStockStore.settleStaleClaims(Duration.ZERO, this::issuedInMysql);
+
+        assertEquals("5", stock(coupon));
+        assertEquals("OK", claim(coupon.getId(), "ghost"));
+        assertEquals("4", stock(coupon));
+    }
+
+    @Test
+    void settlingKeepsClaimsThatReachedMysql() {
+        Promotion coupon = openCoupon(5);
+        assertEquals("OK", claim(coupon.getId(), "done"));
+        // Confirmed on success, so nothing is left pending.
+        assertEquals(0L, redisTemplate.opsForHash().size(CouponStockStore.pendingKey(coupon.getId())));
+
+        // A claim whose row was written but whose confirmation was lost.
+        assertEquals(CouponStockStore.ClaimResult.CLAIMED, couponStockStore.tryClaim(coupon.getId(), "late"));
+        insertIssue(coupon, "late");
+
+        couponStockStore.settleStaleClaims(Duration.ZERO, this::issuedInMysql);
+        assertEquals("3", stock(coupon));
+        assertEquals(0L, redisTemplate.opsForHash().size(CouponStockStore.pendingKey(coupon.getId())));
+    }
+
+    @Test
+    void recentClaimsAreLeftAlone() {
+        Promotion coupon = openCoupon(5);
+        assertTrue(couponStockStore.loadIfAbsent(coupon.getId(), 5));
+        assertEquals(CouponStockStore.ClaimResult.CLAIMED, couponStockStore.tryClaim(coupon.getId(), "inflight"));
+
+        couponStockStore.settleStaleClaims(Duration.ofMinutes(1), this::issuedInMysql);
+        assertEquals("4", stock(coupon));
+        assertTrue(Boolean.TRUE.equals(
+                redisTemplate.opsForHash().hasKey(CouponStockStore.pendingKey(coupon.getId()), "inflight")));
     }
 
     @Test
@@ -244,6 +292,10 @@ class RedisCouponIssueIntegrationTest {
 
     private long issuedRows(Promotion coupon) {
         return promotionIssueRepository.findUserIdsByPromotionId(coupon.getId()).size();
+    }
+
+    private boolean issuedInMysql(Long promotionId, String userId) {
+        return promotionIssueRepository.findByPromotion_IdAndUserId(promotionId, userId).isPresent();
     }
 
     private String stock(Promotion coupon) {

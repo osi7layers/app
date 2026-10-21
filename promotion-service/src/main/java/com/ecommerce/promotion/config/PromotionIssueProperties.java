@@ -19,6 +19,12 @@ public class PromotionIssueProperties {
     /** How often issued_count is caught up with promotion_issue when the store is Redis. */
     private Duration countSyncInterval = Duration.ofSeconds(5);
 
+    /**
+     * Redis store only: a claim with no MySQL row after this long is given back. Must be longer
+     * than a claim can take, including waiting for a database connection (Hikari: 30s).
+     */
+    private Duration staleClaimAfter = Duration.ofSeconds(60);
+
     public enum Store {
         REDIS,
         DB

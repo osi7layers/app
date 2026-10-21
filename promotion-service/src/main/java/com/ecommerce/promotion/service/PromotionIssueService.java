@@ -84,8 +84,9 @@ public class PromotionIssueService {
                 // fall through to the MySQL write below
             }
         }
+        PromotionIssueVm issued;
         try {
-            return transactionTemplate.execute(status -> save(promotionId, userId, now));
+            issued = transactionTemplate.execute(status -> save(promotionId, userId, now));
         } catch (DataIntegrityViolationException ex) {
             if (isDuplicateIssue(ex)) {
                 // MySQL already has this user's coupon: keep them a claimer, give the stock back.
@@ -98,6 +99,13 @@ public class PromotionIssueService {
             undoClaim(promotionId, userId, true);
             throw ex;
         }
+        try {
+            couponStockStore.confirmClaim(promotionId, userId);
+        } catch (DataAccessException e) {
+            // Harmless: StaleClaimSettler finds the row in MySQL and confirms it later.
+            log.debug("Could not confirm coupon {} for {} in Redis: {}", promotionId, userId, e.getMessage());
+        }
+        return issued;
     }
 
     private ClaimResult claimInRedis(CouponWindow window, String userId) {
