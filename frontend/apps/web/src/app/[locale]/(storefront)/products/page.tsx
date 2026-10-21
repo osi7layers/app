@@ -47,8 +47,10 @@ function ProductsContent() {
 
   const { parents, childrenOf, findById } = useCategoryTree();
   // 선택한 카테고리가 소분류면 그 부모가, 대분류면 자기가 사이드바 그룹이 된다.
+  // 소분류가 없는 카테고리(대분류를 지워 평평해진 경우 포함)는 그룹 없이 전체 목록에서 고른다.
   const selected = selectedCategory !== undefined ? findById(selectedCategory) : undefined;
-  const group = selected ? (selected.parentCategory ? findById(selected.parentCategory.categoryId) : selected) : undefined;
+  const groupCandidate = selected ? (selected.parentCategory ? findById(selected.parentCategory.categoryId) : selected) : undefined;
+  const group = groupCandidate && childrenOf(groupCandidate.categoryId).length > 0 ? groupCandidate : undefined;
   // 대분류를 고르면 그 아래 소분류 상품까지 모두 보여 준다.
   const categoryIds =
     selectedCategory === undefined

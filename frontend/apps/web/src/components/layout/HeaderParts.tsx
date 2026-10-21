@@ -3,22 +3,23 @@
 import { useTranslations } from "next-intl";
 import { Phone, MapPin, FileText, Store, TicketPercent } from "lucide-react";
 import { Link } from "@/i18n/navigation";
-import { useCategoryTree } from "@/hooks";
+import { useCategoryMenu } from "@/hooks";
 
 // Top utility bar (dark red): quick category links on the left, support links on
 // the right — mirrors the CellphoneS top strip.
-// 카테고리 링크는 DB의 대분류(categories.parent_category_id 가 없는 것)를 그대로 보여 준다.
+// 카테고리 링크는 DB의 대분류(categories.parent_category_id 가 없는 것)를 보여 준다.
+// 대분류가 없으면 '의류' 하나만 둔다 (useCategoryMenu).
 
 export function TopBar() {
   const t = useTranslations("Header");
-  const { parents } = useCategoryTree();
+  const menuItems = useCategoryMenu();
   return (
     <div className="bg-primary-700 text-white/90 text-xs">
       <div className="max-w-7xl mx-auto px-4 h-8 flex items-center justify-between">
         <nav className="flex items-center gap-4 overflow-x-auto no-scrollbar">
-          {parents.map((cat) => (
-            <Link key={cat.categoryId} href={`/products?categoryId=${cat.categoryId}`} className="hover:text-white whitespace-nowrap transition-colors">
-              {cat.categoryTitle}
+          {menuItems.map((item) => (
+            <Link key={item.key} href={item.href} className="hover:text-white whitespace-nowrap transition-colors">
+              {item.label}
             </Link>
           ))}
         </nav>
