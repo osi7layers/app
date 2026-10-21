@@ -39,4 +39,18 @@ public interface PromotionRepository extends JpaRepository<Promotion, Long> {
             """)
     int claimIssueSlot(@Param("id") Long id, @Param("now") Instant now);
 
+    /**
+     * Copies the number of issued rows into {@code issued_count} for first-come coupons that
+     * have not been over for long. Touches only rows whose count is off.
+     */
+    @Modifying
+    @Query(nativeQuery = true, value = """
+            UPDATE promotion p
+            SET p.issued_count = (SELECT COUNT(*) FROM promotion_issue i WHERE i.promotion_id = p.id)
+            WHERE p.issue_limit IS NOT NULL
+              AND (p.end_date IS NULL OR p.end_date >= :endedAfter)
+              AND p.issued_count <> (SELECT COUNT(*) FROM promotion_issue i WHERE i.promotion_id = p.id)
+            """)
+    int syncIssuedCounts(@Param("endedAfter") Instant endedAfter);
+
 }

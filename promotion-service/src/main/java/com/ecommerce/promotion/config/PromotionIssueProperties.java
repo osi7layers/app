@@ -16,6 +16,9 @@ public class PromotionIssueProperties {
     /** How long a pod trusts its cached copy of a coupon's open window and total quantity. */
     private Duration windowCacheTtl = Duration.ofSeconds(3);
 
+    /** How often issued_count is caught up with promotion_issue when the store is Redis. */
+    private Duration countSyncInterval = Duration.ofSeconds(5);
+
     public enum Store {
         REDIS,
         DB

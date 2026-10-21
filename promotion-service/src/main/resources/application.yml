@@ -51,6 +51,8 @@ promotion:
     store: ${PROMOTION_ISSUE_STORE:redis}
     # Each pod caches a coupon's open window and total for this long instead of reading it per claim.
     window-cache-ttl: ${PROMOTION_ISSUE_WINDOW_CACHE_TTL:3s}
+    # Redis store only: how often promotion.issued_count is caught up with promotion_issue.
+    count-sync-interval: ${PROMOTION_ISSUE_COUNT_SYNC_INTERVAL:5s}
 ---
 management:
   server:
