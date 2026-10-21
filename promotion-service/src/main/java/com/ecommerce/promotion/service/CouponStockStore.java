@@ -7,7 +7,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 /**
@@ -33,6 +35,11 @@ public class CouponStockStore {
     private static final Duration LOAD_WAIT = Duration.ofSeconds(3);
     private static final long LOAD_POLL_MILLIS = 50;
 
+    private static final RedisScript<Long> CLAIM =
+            RedisScript.of(new ClassPathResource("redis/coupon-claim.lua"), Long.class);
+    private static final RedisScript<Long> UNCLAIM =
+            RedisScript.of(new ClassPathResource("redis/coupon-unclaim.lua"), Long.class);
+
     private final StringRedisTemplate redis;
     private final PromotionIssueRepository promotionIssueRepository;
     // ReentrantLock rather than synchronized: virtual threads would pin their carrier on a monitor.
@@ -48,6 +55,35 @@ public class CouponStockStore {
 
     private static String loadLockKey(Long promotionId) {
         return "coupon:{" + promotionId + "}:loading";
+    }
+
+    public enum ClaimResult {
+        CLAIMED,
+        SOLD_OUT,
+        ALREADY_CLAIMED,
+        /** Redis has no state for this coupon yet; call {@link #loadIfAbsent} and try again. */
+        NOT_LOADED
+    }
+
+    /** Takes one coupon for the user if any are left and the user has none yet. */
+    public ClaimResult tryClaim(Long promotionId, String userId) {
+        Long result = redis.execute(CLAIM, List.of(stockKey(promotionId), usersKey(promotionId)), userId);
+        return switch (result == null ? -1 : result.intValue()) {
+            case 0 -> ClaimResult.CLAIMED;
+            case 1 -> ClaimResult.SOLD_OUT;
+            case 2 -> ClaimResult.ALREADY_CLAIMED;
+            default -> ClaimResult.NOT_LOADED;
+        };
+    }
+
+    /**
+     * Undoes {@link #tryClaim} after the MySQL write failed.
+     *
+     * @param forgetUser false when MySQL already holds this user's coupon, so they stay a claimer
+     */
+    public void undoClaim(Long promotionId, String userId, boolean forgetUser) {
+        redis.execute(UNCLAIM, List.of(stockKey(promotionId), usersKey(promotionId)),
+                userId, forgetUser ? "1" : "0");
     }
 
     /** Seeds a coupon that has no claims yet. Does nothing if its stock is already there. */
