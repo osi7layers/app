@@ -49,6 +49,8 @@ promotion:
     # redis: stock is decremented in Redis, only winners write to MySQL.
     # db: the previous MySQL-only path (conditional UPDATE on the promotion row).
     store: ${PROMOTION_ISSUE_STORE:redis}
+    # Each pod caches a coupon's open window and total for this long instead of reading it per claim.
+    window-cache-ttl: ${PROMOTION_ISSUE_WINDOW_CACHE_TTL:3s}
 ---
 management:
   server:

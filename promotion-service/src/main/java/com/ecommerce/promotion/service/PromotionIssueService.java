@@ -9,6 +9,7 @@ import com.ecommerce.promotion.model.PromotionIssue;
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import com.ecommerce.promotion.repository.PromotionRepository;
 import com.ecommerce.promotion.service.CouponStockStore.ClaimResult;
+import com.ecommerce.promotion.service.CouponWindowCache.CouponWindow;
 import com.ecommerce.promotion.viewmodel.PromotionIssueVm;
 import java.time.Instant;
 import java.util.function.Supplier;
@@ -39,17 +40,20 @@ public class PromotionIssueService {
     private final PromotionRepository promotionRepository;
     private final PromotionIssueRepository promotionIssueRepository;
     private final CouponStockStore couponStockStore;
+    private final CouponWindowCache couponWindowCache;
     private final PromotionIssueProperties properties;
     private final TransactionTemplate transactionTemplate;
 
     public PromotionIssueService(PromotionRepository promotionRepository,
                                  PromotionIssueRepository promotionIssueRepository,
                                  CouponStockStore couponStockStore,
+                                 CouponWindowCache couponWindowCache,
                                  PromotionIssueProperties properties,
                                  PlatformTransactionManager transactionManager) {
         this.promotionRepository = promotionRepository;
         this.promotionIssueRepository = promotionIssueRepository;
         this.couponStockStore = couponStockStore;
+        this.couponWindowCache = couponWindowCache;
         this.properties = properties;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -67,12 +71,12 @@ public class PromotionIssueService {
     // ------------------------------------------------------------------
 
     private PromotionIssueVm issueWithRedis(Long promotionId, String userId, Instant now) {
-        Promotion promotion = promotionRepository.findById(promotionId)
+        CouponWindow window = couponWindowCache.get(promotionId)
                 .orElseThrow(() -> BusinessException.notFound("promotion.coupon.not.found", promotionId));
-        if (!isOpen(promotion, now)) {
+        if (!window.isOpen(now)) {
             throw BusinessException.of(ErrorCode.COUPON_NOT_OPEN);
         }
-        switch (claimInRedis(promotion, userId)) {
+        switch (claimInRedis(window, userId)) {
             case SOLD_OUT -> throw BusinessException.of(ErrorCode.COUPON_SOLD_OUT);
             case ALREADY_CLAIMED -> throw BusinessException.of(ErrorCode.COUPON_ALREADY_CLAIMED);
             case NOT_LOADED -> throw BusinessException.of(ErrorCode.COUPON_STORE_UNAVAILABLE);
@@ -96,13 +100,13 @@ public class PromotionIssueService {
         }
     }
 
-    private ClaimResult claimInRedis(Promotion promotion, String userId) {
-        Long promotionId = promotion.getId();
+    private ClaimResult claimInRedis(CouponWindow window, String userId) {
+        Long promotionId = window.promotionId();
         ClaimResult result = redisCall(() -> couponStockStore.tryClaim(promotionId, userId));
         if (result != ClaimResult.NOT_LOADED) {
             return result;
         }
-        boolean loaded = redisCall(() -> couponStockStore.loadIfAbsent(promotionId, promotion.getIssueLimit()));
+        boolean loaded = redisCall(() -> couponStockStore.loadIfAbsent(promotionId, window.issueLimit()));
         return loaded ? redisCall(() -> couponStockStore.tryClaim(promotionId, userId)) : ClaimResult.NOT_LOADED;
     }
 
@@ -146,7 +150,7 @@ public class PromotionIssueService {
     private BusinessException explainClosedClaim(Long promotionId, Instant now) {
         Promotion promotion = promotionRepository.findById(promotionId)
                 .orElseThrow(() -> BusinessException.notFound("promotion.coupon.not.found", promotionId));
-        if (!isOpen(promotion, now)) {
+        if (!CouponWindow.of(promotion).isOpen(now)) {
             return BusinessException.of(ErrorCode.COUPON_NOT_OPEN);
         }
         return BusinessException.of(ErrorCode.COUPON_SOLD_OUT);
@@ -163,13 +167,6 @@ public class PromotionIssueService {
                 .issuedAt(now)
                 .build());
         return new PromotionIssueVm(saved.getId(), promotionId, userId, saved.getIssuedAt());
-    }
-
-    private static boolean isOpen(Promotion promotion, Instant now) {
-        return Boolean.TRUE.equals(promotion.getIsActive())
-                && promotion.getIssueLimit() != null
-                && (promotion.getStartDate() == null || !promotion.getStartDate().isAfter(now))
-                && (promotion.getEndDate() == null || !promotion.getEndDate().isBefore(now));
     }
 
     private boolean isDuplicateIssue(DataIntegrityViolationException ex) {
