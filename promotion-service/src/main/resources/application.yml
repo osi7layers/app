@@ -36,6 +36,19 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: ${JWT_ISSUER_URI:http://localhost:8080/realms/ecommerce}
+  # Holds first-come coupon stock and claimers (promotion.issue.store=redis).
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT:1s}
+---
+promotion:
+  issue:
+    # redis: stock is decremented in Redis, only winners write to MySQL.
+    # db: the previous MySQL-only path (conditional UPDATE on the promotion row).
+    store: ${PROMOTION_ISSUE_STORE:redis}
 ---
 management:
   server:
@@ -47,6 +60,11 @@ management:
   endpoint:
     health:
       show-details: always
+  # The probes hit /actuator/health. A Redis outage only stops coupon issuing (503),
+  # so it must not take the whole service out of rotation; couponStore reports it instead.
+  health:
+    redis:
+      enabled: false
 ---
 springdoc:
   swagger-ui:

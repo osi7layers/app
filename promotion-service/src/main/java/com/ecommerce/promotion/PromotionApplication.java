@@ -1,9 +1,12 @@
 package com.ecommerce.promotion;
 
+import com.ecommerce.promotion.config.PromotionIssueProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
+@EnableConfigurationProperties(PromotionIssueProperties.class)
 public class PromotionApplication {
 
     public static void main(String[] args) {
