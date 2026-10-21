@@ -2,6 +2,7 @@ package com.ecommerce.promotion.repository;
 
 import com.ecommerce.promotion.model.Promotion;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,6 +26,16 @@ public interface PromotionRepository extends JpaRepository<Promotion, Long> {
                                    @Param("startDate") Instant startDate,
                                    @Param("endDate") Instant endDate,
                                    Pageable pageable);
+
+    /** Active first-come coupons that have not ended, or ended after {@code endedAfter}. */
+    @Query("""
+            SELECT p FROM Promotion p
+            WHERE p.issueLimit IS NOT NULL
+              AND p.isActive = true
+              AND (p.endDate IS NULL OR p.endDate >= :endedAfter)
+            ORDER BY p.startDate, p.id
+            """)
+    List<Promotion> findFirstComeCoupons(@Param("endedAfter") Instant endedAfter, Pageable pageable);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

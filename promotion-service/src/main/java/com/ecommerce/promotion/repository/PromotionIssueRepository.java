@@ -17,6 +17,10 @@ public interface PromotionIssueRepository extends JpaRepository<PromotionIssue, 
     @Query("SELECT i.userId FROM PromotionIssue i WHERE i.promotion.id = :promotionId")
     List<String> findUserIdsByPromotionId(@Param("promotionId") Long promotionId);
 
+    @Query("SELECT i.promotion.id FROM PromotionIssue i WHERE i.userId = :userId AND i.promotion.id IN :promotionIds")
+    List<Long> findClaimedPromotionIds(@Param("userId") String userId,
+                                       @Param("promotionIds") List<Long> promotionIds);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE PromotionIssue i

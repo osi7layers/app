@@ -2,7 +2,10 @@ package com.ecommerce.promotion.service;
 
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.RequiredArgsConstructor;
@@ -84,6 +87,26 @@ public class CouponStockStore {
     public void undoClaim(Long promotionId, String userId, boolean forgetUser) {
         redis.execute(UNCLAIM, List.of(stockKey(promotionId), usersKey(promotionId)),
                 userId, forgetUser ? "1" : "0");
+    }
+
+    /**
+     * How many of each coupon are gone, read from the live stock in one round trip.
+     * Coupons Redis has no state for are left out.
+     *
+     * @param issueLimits promotion id to its total quantity
+     */
+    public Map<Long, Integer> issuedCounts(Map<Long, Integer> issueLimits) {
+        List<Long> ids = new ArrayList<>(issueLimits.keySet());
+        List<String> stocks = redis.opsForValue().multiGet(ids.stream().map(CouponStockStore::stockKey).toList());
+        Map<Long, Integer> issued = new HashMap<>();
+        for (int i = 0; i < ids.size(); i++) {
+            String stock = stocks == null ? null : stocks.get(i);
+            if (stock != null) {
+                int limit = issueLimits.get(ids.get(i));
+                issued.put(ids.get(i), Math.min(limit, Math.max(0, limit - Integer.parseInt(stock))));
+            }
+        }
+        return issued;
     }
 
     /** Seeds a coupon that has no claims yet. Does nothing if its stock is already there. */
