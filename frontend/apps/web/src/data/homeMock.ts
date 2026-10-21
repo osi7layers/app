@@ -55,9 +55,9 @@ export interface BrandLogo {
 }
 
 export const heroSlides: HeroSlide[] = [
-  { id: 1, key: "slide1", href: "/products?categoryId=1", gradient: "from-rose-600 via-primary-600 to-primary-700" },
-  { id: 2, key: "slide2", href: "/products?categoryId=2", gradient: "from-indigo-600 via-blue-600 to-sky-600" },
-  { id: 3, key: "slide3", href: "/products?categoryId=3", gradient: "from-emerald-600 via-teal-600 to-cyan-600" },
+  { id: 1, key: "slide1", href: "/products", gradient: "from-rose-600 via-primary-600 to-primary-700" },
+  { id: 2, key: "slide2", href: "/products", gradient: "from-indigo-600 via-blue-600 to-sky-600" },
+  { id: 3, key: "slide3", href: "/products", gradient: "from-emerald-600 via-teal-600 to-cyan-600" },
 ];
 
 export const heroSideBanners = [
