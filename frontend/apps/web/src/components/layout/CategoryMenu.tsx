@@ -4,12 +4,14 @@ import { useState, useRef, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Menu, ChevronRight } from "lucide-react";
 import { Link } from "@/i18n/navigation";
-import { categoryIcons } from "@/data/homeMock";
+import { useCategoryTree } from "@/hooks";
+import { categoryEmoji } from "@/data/homeMock";
 import { categoryMenuStyles as s } from "./categoryMenu.styles";
 
 export default function CategoryMenu() {
   const t = useTranslations("Category");
   const [open, setOpen] = useState(false);
+  const { parents } = useCategoryTree();
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,10 +30,10 @@ export default function CategoryMenu() {
 
       {open && (
         <div className={s.panel}>
-          {categoryIcons.map((cat) => (
-            <Link key={cat.id} href={cat.href} onClick={() => setOpen(false)} className={s.item}>
-              <span className={s.itemEmoji}>{cat.emoji}</span>
-              <span className={s.itemLabel}>{t(cat.key)}</span>
+          {parents.map((cat, i) => (
+            <Link key={cat.categoryId} href={`/products?categoryId=${cat.categoryId}`} onClick={() => setOpen(false)} className={s.item}>
+              <span className={s.itemEmoji}>{categoryEmoji(i)}</span>
+              <span className={s.itemLabel}>{cat.categoryTitle}</span>
               <ChevronRight className={s.itemCaret} />
             </Link>
           ))}
