@@ -6,6 +6,7 @@
 //   - Username/Password 자격 증명 'harbor-robot-push' (robot$ecommerce+push)
 //   - Username/Password 자격 증명 'gitops-push' (GitHub fine-grained PAT, gitops Contents RW)
 //   - Username/Password 자격 증명 'aws-ecr-push' (IAM 사용자 osi7-jenkins-ecr-push의 Access key ID / Secret)
+//   - Secret text 자격 증명 'slack-webhook' (Slack Webhook URL)
 
 // 서비스별로 이미지 내용에 영향을 주는 경로 (백엔드는 공통 모듈과 루트 pom.xml 포함)
 def SERVICE_PATHS = [
