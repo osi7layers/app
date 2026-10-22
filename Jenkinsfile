@@ -335,5 +335,3 @@ pipeline {
     always   { sh 'docker logout "$REGISTRY" || true' }
   }
 }
-
-
