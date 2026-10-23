@@ -36,7 +36,7 @@ public class ProductController {
 
     @PostMapping
     public ResponseEntity<ProductDto> save(@RequestBody
-                                           @NotNull(message = "Input must not be NULL!")
+                                           @NotNull(message = "Input must not be NULL.")
                                            @Valid final ProductDto productDto) {
         log.info("ProductDto, resource; save product");
         return ResponseEntity.ok(productService.save(productDto));
@@ -44,7 +44,7 @@ public class ProductController {
 
     @PutMapping
     public ResponseEntity<ProductDto> update(@RequestBody
-                                             @NotNull(message = "Input must not be NULL!")
+                                             @NotNull(message = "Input must not be NULL.")
                                              @Valid final ProductDto productDto) {
         log.info("ProductDto, resource; update product");
         return ResponseEntity.ok(productService.update(productDto));
@@ -53,7 +53,7 @@ public class ProductController {
     @PutMapping("/{productId}")
     public ResponseEntity<ProductDto> update(@PathVariable("productId") final Integer productId,
                                              @RequestBody
-                                             @NotNull(message = "Input must not be NULL!")
+                                             @NotNull(message = "Input must not be NULL.")
                                              @Valid final ProductDto productDto) {
         log.info("ProductDto, resource; update product with productId");
         return ResponseEntity.ok(productService.update(productId, productDto));
