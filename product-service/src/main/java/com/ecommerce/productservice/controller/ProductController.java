@@ -25,9 +25,7 @@ public class ProductController {
     @GetMapping
     public ResponseEntity<List<ProductDto>> findAll() {
         log.info("ProductDto List, controller; fetch all products");
-        // return ResponseEntity.ok(productService.findAll());
-        // 카나리 자동 롤백 테스트용: 상품 목록 조회를 일부러 실패(500)시킨다. 테스트 후 되돌린다.
-        throw new IllegalStateException("canary rollback test");
+        return ResponseEntity.ok(productService.findAll());
     }
 
     @GetMapping("/{productId}")
