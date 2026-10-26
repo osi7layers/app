@@ -13,6 +13,7 @@
     "page": "Trang {current}/{total}"
   },
   "Lang": {
+    "ko": "KO",
     "vi": "VI",
     "en": "EN",
     "switchLabel": "Chuyển ngôn ngữ"
@@ -43,7 +44,9 @@
     "register": "Đăng ký",
     "orders": "Đơn hàng",
     "mobileMenu": "Menu",
-    "coupons": "Mã giảm giá"
+    "coupons": "Mã giảm giá",
+    "locationLabel": "Khu vực",
+    "locationCity": "Hồ Chí Minh"
   },
   "Footer": {
     "tagline": "Nền tảng thương mại điện tử hàng đầu Việt Nam. Mua sắm thông minh, giao hàng nhanh chóng.",
@@ -193,6 +196,7 @@
     "viewAll": "Xem tất cả",
     "sold": "Đã bán {count}",
     "installment": "Trả góp",
+    "memberExtra": "Smember giảm thêm",
     "hotProducts": "Sản phẩm nổi bật",
     "newArrivals": "Hàng mới về",
     "featuredBrands": "Thương hiệu nổi bật",

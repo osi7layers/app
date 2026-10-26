@@ -5,7 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatPrice(price: number, currency = "VND"): string {
+// 상품 가격은 원화 기준으로 저장되어 있어서 기본 통화를 KRW로 둔다.
+export function formatPrice(price: number, currency = "KRW"): string {
+  if (currency === "KRW") {
+    return new Intl.NumberFormat("ko-KR", {
+      style: "currency",
+      currency: "KRW",
+    }).format(price);
+  }
   if (currency === "VND") {
     return new Intl.NumberFormat("vi-VN", {
       style: "currency",

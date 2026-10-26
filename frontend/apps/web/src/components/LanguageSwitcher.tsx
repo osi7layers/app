@@ -2,6 +2,7 @@
 
 import { useLocale, useTranslations } from "next-intl";
 import { useRouter, usePathname } from "@/i18n/navigation";
+import { routing } from "@/i18n/routing";
 import { useTransition } from "react";
 import { cn } from "@ecommerce/lib/utils";
 import { uiStyles as s } from "./ui/ui.styles";
@@ -21,7 +22,7 @@ export default function LanguageSwitcher() {
 
   return (
     <div className={s.langWrap} title={t("switchLabel")}>
-      {(["vi", "en"] as const).map((loc) => (
+      {routing.locales.map((loc) => (
         <button
           key={loc}
           onClick={() => switchTo(loc)}
