@@ -13,11 +13,11 @@ export function formatCountdown(ms: number): string {
   return countdownParts(ms).join(":");
 }
 
-// Short local time, e.g. "14:30" today or "16/10 14:30" on another day.
+// Short local time, e.g. "14:30" today or "10. 16. 14:30" on another day.
 export function formatShortTime(iso: string, now: number): string {
   const date = new Date(iso);
-  const time = date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  const time = date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
   if (date.toDateString() === new Date(now).toDateString()) return time;
-  const day = date.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
+  const day = date.toLocaleDateString("ko-KR", { month: "2-digit", day: "2-digit" });
   return `${day} ${time}`;
 }

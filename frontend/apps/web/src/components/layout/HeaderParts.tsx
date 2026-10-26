@@ -62,11 +62,12 @@ export function Logo({ light = false }: { light?: boolean }) {
 }
 
 export function LocationPill() {
+  const t = useTranslations("Header");
   return (
     <button className="hidden lg:flex items-center gap-1.5 text-white text-xs hover:bg-white/10 rounded-lg px-2.5 py-1.5 transition-colors">
       <MapPin className="h-4 w-4" />
       <span className="text-left leading-tight">
-        Khu vực<br /><span className="font-semibold">Hồ Chí Minh</span>
+        {t("locationLabel")}<br /><span className="font-semibold">{t("locationCity")}</span>
       </span>
     </button>
   );

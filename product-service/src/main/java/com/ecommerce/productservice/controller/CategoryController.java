@@ -59,7 +59,7 @@ public class CategoryController {
 
     @PostMapping
     public ResponseEntity<CategoryDto> save(@RequestBody
-                                            @NotNull(message = "Input must not be NULL")
+                                            @NotNull(message = "입력값이 비어 있습니다.")
                                             @Valid final CategoryDto categoryDto) {
         log.info("CategoryDto, resource; save category");
         return ResponseEntity.ok(categoryService.save(categoryDto));
@@ -67,7 +67,7 @@ public class CategoryController {
 
     @PutMapping
     public ResponseEntity<CategoryDto> update(@RequestBody
-                                              @NotNull(message = "Input must not be NULL")
+                                              @NotNull(message = "입력값이 비어 있습니다.")
                                               @Valid final CategoryDto categoryDto) {
         log.info("CategoryDto, resource; update category");
         return ResponseEntity.ok(categoryService.update(categoryDto));
@@ -76,7 +76,7 @@ public class CategoryController {
     @PutMapping("/{categoryId}")
     public ResponseEntity<CategoryDto> update(@PathVariable("categoryId") final Integer categoryId,
                                               @RequestBody
-                                              @NotNull(message = "Input must not be NULL")
+                                              @NotNull(message = "입력값이 비어 있습니다.")
                                               @Valid final CategoryDto categoryDto) {
         log.info("CategoryDto, resource; update category with categoryId");
         return ResponseEntity.ok(categoryService.update(categoryId, categoryDto));

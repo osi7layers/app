@@ -46,7 +46,7 @@ export default function ProductTile({ product, className }: ProductTileProps) {
 
         {!!memberExtra && (
           <p className={s.tileMemberBox}>
-            Smember giảm thêm{" "}
+            {t("memberExtra")}{" "}
             <span className={s.tileMemberAmount}>{formatPrice(memberExtra)}</span>
           </p>
         )}

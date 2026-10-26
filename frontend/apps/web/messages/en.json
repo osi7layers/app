@@ -13,6 +13,7 @@
     "page": "Page {current}/{total}"
   },
   "Lang": {
+    "ko": "KO",
     "vi": "VI",
     "en": "EN",
     "switchLabel": "Switch language"
@@ -43,7 +44,9 @@
     "register": "Sign up",
     "orders": "Orders",
     "mobileMenu": "Menu",
-    "coupons": "Coupons"
+    "coupons": "Coupons",
+    "locationLabel": "Your area",
+    "locationCity": "Seoul"
   },
   "Footer": {
     "tagline": "Vietnam's leading e-commerce platform. Smart shopping, fast delivery.",
@@ -193,6 +196,7 @@
     "viewAll": "View all",
     "sold": "Sold {count}",
     "installment": "Installment",
+    "memberExtra": "Member extra",
     "hotProducts": "Featured products",
     "newArrivals": "New arrivals",
     "featuredBrands": "Featured brands",
