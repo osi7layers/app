@@ -71,3 +71,8 @@ files
 ### Flatten-maven-plugin ###
 **/.flattened-pom.xml
 .flattened-pom.xml
+
+# 로컬 환경 변수 (예시는 .env.example)
+.env
+.env*.local
+!.env.example
