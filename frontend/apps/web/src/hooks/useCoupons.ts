@@ -29,7 +29,7 @@ async function fetchCoupons(): Promise<CouponEvent[]> {
     promotionId: c.promotionId,
     name: c.name,
     description: c.description,
-    // 화면은 정액 할인만 표시한다. 정률 쿠폰은 금액 0 으로 보인다.
+    // 정률 쿠폰은 discountAmount 가 null 이라 0 으로 둔다. 카드는 discountPercentage 가 있으면 % 로 보여 준다.
     discountAmount: c.discountAmount ?? 0,
     discountType: c.discountType,
     discountPercentage: c.discountPercentage,

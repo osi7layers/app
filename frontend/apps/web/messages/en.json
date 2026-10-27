@@ -223,6 +223,18 @@
     "c9": "Accessories",
     "c10": "TVs"
   },
+  "HeroSidebar": {
+    "s1": "Clothing",
+    "s2": "Laptop",
+    "s3": "Audio & Mics",
+    "s4": "Watches & Cameras",
+    "s5": "Home Appliances",
+    "s6": "Accessories",
+    "s7": "PC, Monitors & Printers",
+    "s8": "TV",
+    "s9": "Cooling & Gaming Gear",
+    "s10": "Used Deals"
+  },
   "Products": {
     "metaTitle": "Products",
     "title": "All products",

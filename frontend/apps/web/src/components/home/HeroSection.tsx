@@ -10,6 +10,7 @@ import { homeStyles as s } from "./home.styles";
 
 export default function HeroSection() {
   const t = useTranslations("Home");
+  const tSide = useTranslations("HeroSidebar");
   const [active, setActive] = useState(0);
   const count = heroSlides.length;
   const go = useCallback((i: number) => setActive((i + count) % count), [count]);
@@ -26,7 +27,7 @@ export default function HeroSection() {
         {heroSidebar.map((cat) => (
           <Link key={cat.id} href={cat.href} className={s.heroSidebarItem}>
             <span className={s.heroSidebarEmoji}>{cat.emoji}</span>
-            <span className={s.heroSidebarLabel}>{cat.label}</span>
+            <span className={s.heroSidebarLabel}>{tSide(cat.key)}</span>
             <Caret className="h-4 w-4 text-gray-300 group-hover:text-primary-500" />
           </Link>
         ))}

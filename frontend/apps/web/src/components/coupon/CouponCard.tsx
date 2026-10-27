@@ -26,6 +26,13 @@ interface CouponCardProps {
   featured?: boolean;
 }
 
+// 정률 쿠폰은 discountPercentage, 정액 쿠폰은 discountAmount 에 값이 오고 다른 쪽은 null 이다.
+// 값이 있는 쪽을 보고 "10%" 또는 "₩10,000" 으로 보여 준다.
+function discountText(coupon: CouponEvent) {
+  if (coupon.discountPercentage != null) return `${coupon.discountPercentage}%`;
+  return formatPrice(coupon.discountAmount);
+}
+
 export default function CouponCard({ coupon, status, now, issuing, onIssue, featured = false }: CouponCardProps) {
   const t = useTranslations("Coupons");
   const left = Math.max(0, coupon.issueLimit - coupon.issuedCount);
@@ -36,7 +43,7 @@ export default function CouponCard({ coupon, status, now, issuing, onIssue, feat
   return (
     <div className={cn(s.card, inactive && s.cardInactive)}>
       <div className={cn(s.stub, featured && s.stubFeatured, inactive && s.stubMuted)}>
-        <span className={cn(s.stubAmount, featured && s.stubAmountFeatured)}>{formatPrice(coupon.discountAmount)}</span>
+        <span className={cn(s.stubAmount, featured && s.stubAmountFeatured)}>{discountText(coupon)}</span>
         <span className={cn(s.stubLabel, featured && s.stubLabelFeatured)}>{t("discountLabel")}</span>
       </div>
 
