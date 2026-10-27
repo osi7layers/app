@@ -191,7 +191,7 @@ pipeline {
               when { environment name: 'BUILD_PRODUCT', value: 'true' }
               steps {
                 sh '''
-                  docker build --provenance=false -t "$REGISTRY/ecommerce/product:$TAG_PRODUCT" product-service
+                  docker build --provenance=false --build-arg APP_VERSION="$TAG_PRODUCT" -t "$REGISTRY/ecommerce/product:$TAG_PRODUCT" product-service
                   docker push "$REGISTRY/ecommerce/product:$TAG_PRODUCT"
                 '''
               }
