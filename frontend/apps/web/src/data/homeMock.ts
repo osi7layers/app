@@ -22,7 +22,7 @@ export interface ShowcaseProduct {
 export interface SidebarCategory {
   id: number;
   emoji: string;
-  label: string;
+  key: string; // messages 의 HeroSidebar.<key>
   href: string;
 }
 
@@ -123,16 +123,16 @@ export const hotProducts: ShowcaseProduct[] = [
 // Left vertical category list shown in the hero (CellphoneS signature sidebar).
 // 위와 같이 모든 메뉴가 전체 상품(=의류)으로 간다.
 export const heroSidebar: SidebarCategory[] = [
-  { id: 1, emoji: "👕", label: "Quần áo", href: "/products" }, // 의류
-  { id: 2, emoji: "💻", label: "Laptop", href: "/products" },
-  { id: 3, emoji: "🎧", label: "Âm thanh, Mic thu âm", href: "/products" },
-  { id: 4, emoji: "⌚", label: "Đồng hồ, Camera", href: "/products" },
-  { id: 5, emoji: "🏠", label: "Đồ gia dụng", href: "/products" },
-  { id: 6, emoji: "🔌", label: "Phụ kiện", href: "/products" },
-  { id: 7, emoji: "🖥️", label: "PC, Màn hình, Máy in", href: "/products" },
-  { id: 8, emoji: "📺", label: "Tivi", href: "/products" },
-  { id: 9, emoji: "🎮", label: "Tản nhiệt, Gaming Gear", href: "/products" },
-  { id: 10, emoji: "♻️", label: "Hàng cũ giá rẻ", href: "/products" },
+  { id: 1, emoji: "👕", key: "s1", href: "/products" }, // 의류
+  { id: 2, emoji: "💻", key: "s2", href: "/products" },
+  { id: 3, emoji: "🎧", key: "s3", href: "/products" },
+  { id: 4, emoji: "⌚", key: "s4", href: "/products" },
+  { id: 5, emoji: "🏠", key: "s5", href: "/products" },
+  { id: 6, emoji: "🔌", key: "s6", href: "/products" },
+  { id: 7, emoji: "🖥️", key: "s7", href: "/products" },
+  { id: 8, emoji: "📺", key: "s8", href: "/products" },
+  { id: 9, emoji: "🎮", key: "s9", href: "/products" },
+  { id: 10, emoji: "♻️", key: "s10", href: "/products" },
 ];
 
 // Brand filter chips per category section.
