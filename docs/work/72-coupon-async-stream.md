@@ -16,7 +16,7 @@
 | 스위치 | `PROMOTION_ISSUE_STORE=redis-async`. 기본값은 그대로 `redis`라 **머지만으로는 동작이 바뀌지 않는다**. `redis` · `db`와 같은 코드로 부하 비교, 문제 시 환경변수로 즉시 되돌림 |
 | 응답 | 202 `PENDING`. 결과는 상태 조회 API로 확인 (프론트가 폴링) |
 | 원본 | MySQL이 최종 원본이다. 다만 처리 전 당첨은 Redis Stream에만 있으므로 **Redis AOF + 디스크 유지가 필수**이고, 운영은 Sentinel 이중화와 함께 쓴다 |
-| 실패 처리 | 일정 횟수 실패한 항목은 DLQ로 옮기고 수량을 반납, 사용자 상태는 `FAILED` |
+| 실패 처리 | 여러 번 실패한 항목은 한 번 더 기록을 시도하고, **MySQL이 행을 거부할 때만**(외래키 등) DLQ로 옮기고 수량 반납, 사용자 상태는 `FAILED`. MySQL에 닿지 않는 동안은 반납하지 않는다 |
 
 ## 동작 방식
 
@@ -28,13 +28,16 @@ POST /storefront/promotions/{id}/issue
 
 워커 (모든 pod, consumer group coupon-writer, consumer 이름 = pod 이름)
  → XREADGROUP 100건 → 한 트랜잭션으로 INSERT (유니크 위반이 섞이면 한 건씩, 중복은 이미 기록된 것으로 처리)
- → pending 삭제 → XACK → XDEL
- → 10초마다: 30초 넘게 ACK 안 된 항목 회수(XPENDING + XCLAIM) → 다시 기록
-             10번 넘게 전달된 항목 → coupon:issue-dlq, failed 기록, 수량 반납
+ → pending 삭제 · XACK · XDEL (Lua 하나로 원자 처리)
+ → 10초마다: 30초 넘게 ACK 안 된 항목 회수(XPENDING IDLE + XCLAIM) → 다시 기록
+             10번 넘게 전달된 항목 → 한 번 더 기록 시도
+               MySQL이 거부 → coupon:issue-dlq(원자 이동), failed 기록, 수량 반납
+               MySQL에 닿지 않음 → 그대로 둠 (다음 회차에 다시)
              pending 0이고 1시간 쉰 consumer(옛 pod) 삭제
 
 GET /storefront/promotions/{id}/issue
  → Redis pending → MySQL → Redis failed 순서로 PENDING / ISSUED / FAILED / NONE
+   (Redis 장애 중 MySQL에 행이 없으면 판단할 수 없으므로 503)
 ```
 
 | Redis 키 | 내용 |
@@ -62,7 +65,19 @@ GET /storefront/promotions/{id}/issue
 | `9dddeeb` | 쿠폰 목록 `issueStatus` |
 | `62c0d8e` | Prometheus 지표, 큐 지연 시 `pollAfterMs` 증가 |
 | `4a98a27` | 통합 테스트 |
-| (이 커밋) | 이 문서, QA 초기화 스크립트가 큐도 지우도록 |
+| `5422b48` | 이 문서, QA 초기화 스크립트가 큐도 지우도록 |
+| `d4fc67a` | **검수 수정**: 한도 넘은 항목도 한 번 더 시도, MySQL에 닿지 않으면 반납 안 함. 완료 · DLQ 이동 원자 처리, 회수 대상을 IDLE 필터로 조회 |
+| `48b9ccd` | **검수 수정**: Redis 장애 중 상태 조회가 처리 중인 발급을 `NONE`으로 답하지 않고 503 |
+| `bfb09ab` | **검수 수정**: 대기 시간을 Redis 서버 시각 기준으로 계산 |
+| (이 커밋) | 문서 갱신 |
+
+### 검수에서 발견해서 고친 것
+
+1. **MySQL 장애 뒤 일괄 반납 (`d4fc67a`)**: 전달 횟수만 보고 DLQ로 보냈기 때문에, MySQL이 5분(30초 × 10회) 넘게 멈췄다 돌아오면 그동안 큐에 있던 **정상 발급이 전부 `FAILED`로 반납**됐다. 이제 한도를 넘은 항목도 한 번 더 기록을 시도하고, MySQL이 행을 거부할 때만 포기한다. MySQL에 닿지 않으면 남겨 둔다.
+2. **완료 처리 중간 실패 (`d4fc67a`)**: pending 삭제, XACK, XDEL을 따로 호출해서 XACK 뒤 XDEL이 실패하면 항목이 Stream에 영구히 남았다. 대기열 길이 · 대기 시간 지표가 계속 올라가 `pollAfterMs`가 3초에 고정되고 알림이 울린다. Lua 하나로 묶었다. DLQ 이동도 같은 이유로 묶었다.
+3. **회수 대상 조회 (`d4fc67a`)**: XPENDING 앞쪽 100건 중에서 idle인 것만 골라, 처리 중인 항목이 많을 때는 그 뒤의 멈춘 항목을 찾지 못했다. Spring Data Redis 3.3에 IDLE 옵션이 없어 Lua로 `XPENDING ... IDLE`을 호출한다.
+4. **Redis 장애 중 상태 조회 (`48b9ccd`)**: pending을 확인하지 못해도 `NONE`으로 답해, 프론트가 처리 중인 사용자에게 실패를 보여 줄 수 있었다. MySQL에 행이 없으면 503으로 답하고 프론트는 간격을 늘려 다시 묻는다.
+5. **시계 차이 (`bfb09ab`)**: Stream ID(Redis 서버 시각)를 Pod 시각과 비교해 대기 시간이 틀어질 수 있었다.
 
 ## 프론트 연동 안내
 
@@ -94,6 +109,7 @@ GET /storefront/promotions/{id}/issue
 | `ISSUED` | 발급 완료 | "발급 완료" 알림, 폴링 중단 |
 | `FAILED` | 처리 실패, 수량 반납됨 | "발급 실패" 알림, 폴링 중단 (다시 시도 가능) |
 | `NONE` | 발급 없음 | 202 직후 잠깐 보일 수 있어 3번까지는 계속, 그래도 `NONE`이면 실패로 안내 |
+| (HTTP 503 `PRM-6004`) | Redis 장애로 처리 중인지 알 수 없음 | 간격을 2배로 늘려 계속 조회 |
 
 폴링 규칙 (프론트와 합의):
 - 202를 받았을 때만 시작한다. 간격은 `pollAfterMs` + 무작위 0~300ms.
@@ -115,7 +131,7 @@ GET /storefront/promotions/{id}/issue
 | `PROMOTION_ISSUE_WORKER_POLL_INTERVAL` | `200ms` | 큐가 비었을 때 다시 읽기까지 대기. blocking read는 Redis 명령 시간 초과(1s)와 충돌해 쓰지 않음 |
 | `PROMOTION_ISSUE_WORKER_RECLAIM_INTERVAL` | `10s` | 회수 · DLQ · consumer 정리 주기 |
 | `PROMOTION_ISSUE_WORKER_CLAIM_IDLE` | `30s` | 이 시간 넘게 ACK 안 된 항목을 회수 |
-| `PROMOTION_ISSUE_WORKER_MAX_DELIVERIES` | `10` | 넘으면 DLQ + 반납. 30초 × 10 ≈ **MySQL 장애 5분까지는 반납 없이 버팀** |
+| `PROMOTION_ISSUE_WORKER_MAX_DELIVERIES` | `10` | 넘으면 한 번 더 기록을 시도하고, MySQL이 거부하면 DLQ + 반납. **MySQL에 닿지 않는 동안은 몇 번이든 반납하지 않는다** |
 | `PROMOTION_ISSUE_WORKER_CONSUMER_EXPIRY` | `1h` | pending 0인 옛 pod consumer 삭제 기준 |
 
 ## 지표 (`:9000/actuator/prometheus`)
@@ -136,7 +152,7 @@ Redis는 최대 1초에 한 번만 읽는다 (스크레이프와 폴링이 몰�
 ```bash
 kubectl exec -it <redis-pod> -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli XRANGE coupon:issue-dlq - + COUNT 20'
 ```
-DLQ 항목의 사용자는 이미 `FAILED`로 안내되고 수량도 반납됐다. 원인(쿠폰 삭제, DB 오류 등)을 확인한 뒤 `XDEL`로 지운다.
+DLQ 항목은 MySQL이 행을 거부한 것(쿠폰 삭제로 외래키 위반 등)이다. 사용자는 이미 `FAILED`로 안내되고 수량도 반납됐다. 원인을 확인한 뒤 `XDEL`로 지운다.
 
 ### 큐 상태
 ```bash
@@ -152,7 +168,8 @@ kubectl exec -it <redis-pod> -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli
 ## 검증
 
 ### 테스트
-- promotion-service 테스트 47개 통과 (단위 22, 통합 25: async 12 · 동기 13). 통합은 Testcontainers MySQL 8.0 · Redis 7.4
+- promotion-service 테스트 51개 통과 (단위 26, 통합 25: async 12 · 동기 13). 통합은 Testcontainers MySQL 8.0 · Redis 7.4. async 통합 테스트는 3회 반복해서 모두 통과
+- 워커 단위 테스트: 한도 넘은 항목이 마지막 시도에 기록되면 완료, MySQL이 거부하면 DLQ + 반납, MySQL에 닿지 않으면 아무것도 반납하지 않음
 - async 통합 테스트:
   - 50장에 300명 동시 → `PENDING` 50, 매진 250, 최종 행 50, 재고 0, 중복 0
   - 워커가 멈춘 동안 10장에 40명 → `PENDING` 10, 매진 30, 상태 `PENDING` 유지 → 워커 재시작 후 10건 기록, 기록 수 + 재고 = 수량
@@ -179,6 +196,8 @@ kubectl exec -it <redis-pod> -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli
 - 처리 전 당첨은 Redis에만 있다. Redis 데이터가 통째로 사라지면 그 당첨은 사용자에게 `PENDING`을 준 채 사라진다(수량도 MySQL 기준으로 다시 채워져 초과 발급은 없다). AOF와 Sentinel이 전제다. Sentinel 전환 시 비동기 복제로 마지막 몇 ms가 사라질 수 있어, 필요하면 Lua 뒤에 `WAIT`으로 복제 확인 후 응답하는 것을 이후에 추가한다.
 - 큐에 항목이 남은 상태에서 쿠폰 키만 지우면(`evict`, 수동 삭제) 다시 채울 때 큐의 당첨이 빠져 그만큼 초과 발급될 수 있다. 쿠폰 삭제(`evict`)는 쿠폰 자체가 없어져 해당 항목이 DLQ로 가므로 문제없고, 수동으로 지울 때는 큐가 빈 뒤에 한다.
 - 단일 Redis 전제 (위 "해시 태그" 참고).
+- 동기 `redis`에서 `redis-async`로 바꿀 때: 동기 모드의 시간 초과로 남은 pending(드묾)은 async에서 정리되지 않는다(정리기는 동기 모드에서만 돈다). 바꾸기 전에 `coupon:{*}:pending`이 비어 있는지 확인한다.
+- 큐 지표는 Redis를 1초에 한 번만 읽으므로 최대 1초 늦다.
 
 ## 남은 것
 
