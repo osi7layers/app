@@ -133,7 +133,12 @@ async function pollIssueStatus(promotionId: number, firstDelayMs: number, signal
 }
 
 // 201 이면 바로 발급 완료, 202 면 onPending 을 부른 뒤 결과가 나올 때까지 상태를 조회한다.
-async function issueCoupon(promotionId: number, onPending?: () => void, signal?: AbortSignal): Promise<IssueResult> {
+// resume 이면 발급 요청 없이 바로 조회한다 (새로고침했을 때 목록 issueStatus 가 PENDING 인 쿠폰).
+async function issueCoupon(promotionId: number, onPending?: () => void, signal?: AbortSignal, resume = false): Promise<IssueResult> {
+  if (resume) {
+    onPending?.();
+    return pollIssueStatus(promotionId, POLL_DEFAULT_MS, signal);
+  }
   try {
     const res = await couponApi.issue(promotionId);
     if (res.status !== 202) return "success";
@@ -171,12 +176,14 @@ interface IssueVariables {
   promotionId: number;
   onPending?: () => void; // 202 를 받아 폴링을 시작할 때 (카드를 "처리 중"으로 바꾼다)
   signal?: AbortSignal; // 쿠폰 화면을 떠나면 폴링을 멈춘다
+  resume?: boolean; // 발급 요청 없이 상태 조회만 이어서 한다
 }
 
 export function useIssueCoupon() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ promotionId, onPending, signal }: IssueVariables) => issueCoupon(promotionId, onPending, signal),
+    mutationFn: ({ promotionId, onPending, signal, resume }: IssueVariables) =>
+      issueCoupon(promotionId, onPending, signal, resume),
     // Every outcome can change the remaining count (someone else may have
     // taken the last one), so always refetch the list.
     onSettled: () => queryClient.invalidateQueries({ queryKey: COUPONS_KEY }),
