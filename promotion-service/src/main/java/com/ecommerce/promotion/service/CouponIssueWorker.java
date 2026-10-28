@@ -21,16 +21,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
-import org.springframework.data.redis.connection.stream.PendingMessage;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamInfo.XInfoConsumer;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
-import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -50,9 +47,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>Every {@code worker-reclaim-interval} the worker also takes over entries left
  * unacknowledged for {@code worker-claim-idle} (a pod died, or the write failed) and retries
- * them. An entry handed out {@code worker-max-deliveries} times is moved to
- * {@link CouponStockStore#ISSUE_DEAD_LETTER}, the user is marked failed and the coupon is given
- * back. Consumers of old pods with nothing pending are removed.</p>
+ * them. An entry handed out more than {@code worker-max-deliveries} times whose row MySQL still
+ * refuses is moved to {@link CouponStockStore#ISSUE_DEAD_LETTER}, the user is marked failed and
+ * the coupon is given back. Consumers of old pods with nothing pending are removed.</p>
  */
 @Slf4j
 @Component
@@ -170,8 +167,10 @@ public class CouponIssueWorker implements SmartLifecycle {
     }
 
     /**
-     * Takes over entries no consumer acknowledged within {@code worker-claim-idle}: retried, or
-     * dead-lettered once handed out {@code worker-max-deliveries} times.
+     * Takes over entries no consumer acknowledged within {@code worker-claim-idle} and writes
+     * them again. One handed out more than {@code worker-max-deliveries} times gets one last try
+     * and is given up on only if MySQL refuses its row; if MySQL cannot be reached at all, the
+     * entry is kept, so an outage does not give back the coupons of everyone queued meanwhile.
      *
      * @return the number of entries taken over
      */
@@ -179,11 +178,9 @@ public class CouponIssueWorker implements SmartLifecycle {
         ensureGroup();
         Duration idle = properties.getWorkerClaimIdle();
         Map<RecordId, Long> deliveries = new LinkedHashMap<>();
-        for (PendingMessage message : redis.opsForStream().pending(CouponStockStore.ISSUE_STREAM, GROUP,
-                Range.unbounded(), properties.getWorkerBatchSize())) {
-            if (message.getElapsedTimeSinceLastDelivery().compareTo(idle) >= 0) {
-                deliveries.put(message.getId(), message.getTotalDeliveryCount());
-            }
+        for (CouponStockStore.StuckEntry entry
+                : couponStockStore.stuckQueued(GROUP, idle, properties.getWorkerBatchSize())) {
+            deliveries.put(entry.id(), entry.deliveries());
         }
         if (deliveries.isEmpty()) {
             return 0;
@@ -191,16 +188,16 @@ public class CouponIssueWorker implements SmartLifecycle {
         // min-idle again here, so two pods reclaiming at once do not both take the same entry.
         List<MapRecord<String, Object, Object>> taken = redis.opsForStream().claim(CouponStockStore.ISSUE_STREAM,
                 GROUP, consumerName, idle, deliveries.keySet().toArray(RecordId[]::new));
+        monitor.recordReclaimed(taken.size());
         List<MapRecord<String, Object, Object>> retry = new ArrayList<>();
         for (MapRecord<String, Object, Object> record : taken) {
             long handedOut = deliveries.getOrDefault(record.getId(), 0L) + 1;
             if (handedOut > properties.getWorkerMaxDeliveries()) {
-                deadLetter(record, handedOut);
+                lastTry(record, handedOut);
             } else {
                 retry.add(record);
             }
         }
-        monitor.recordReclaimed(taken.size());
         if (!retry.isEmpty()) {
             log.info("Retrying {} coupon issue entries left unacknowledged", retry.size());
             write(retry);
@@ -208,30 +205,25 @@ public class CouponIssueWorker implements SmartLifecycle {
         return taken.size();
     }
 
-    /**
-     * Gives up on an entry: the user is marked failed and the coupon given back, unless MySQL
-     * has the row after all. The entry is kept on the dead-letter stream.
-     */
-    private void deadLetter(MapRecord<String, Object, Object> record, long handedOut) {
+    /** Writes the entry once more; gives up only when MySQL refuses the row (or it is unreadable). */
+    private void lastTry(MapRecord<String, Object, Object> record, long handedOut) {
         Optional<QueuedClaim> claim = QueuedClaim.of(record);
-        if (claim.isPresent()) {
-            QueuedClaim c = claim.get();
-            if (promotionIssueRepository.findByPromotion_IdAndUserId(c.promotionId(), c.userId()).isPresent()) {
-                finish(List.of(c));
-                return;
-            }
+        // writeAlone throws when MySQL cannot be reached: the entry stays for the next round.
+        if (claim.isPresent() && writeAlone(claim.get())) {
+            finish(List.of(claim.get()));
+            return;
+        }
+        claim.ifPresent(c -> {
             // Failed first, then given back: the user's status never reads as never-claimed.
             couponStockStore.markFailed(c.promotionId(), c.userId());
             couponStockStore.undoClaim(c.promotionId(), c.userId(), true);
-        }
+        });
         Map<String, String> entry = new HashMap<>();
         record.getValue().forEach((k, v) -> entry.put(String.valueOf(k), String.valueOf(v)));
         entry.put("sourceId", record.getId().getValue());
         entry.put("deliveries", String.valueOf(handedOut));
         entry.put("deadAt", String.valueOf(Instant.now().toEpochMilli()));
-        redis.opsForStream().add(StreamRecords.newRecord().in(CouponStockStore.ISSUE_DEAD_LETTER).ofMap(entry));
-        redis.opsForStream().acknowledge(CouponStockStore.ISSUE_STREAM, GROUP, record.getId());
-        redis.opsForStream().delete(CouponStockStore.ISSUE_STREAM, record.getId());
+        couponStockStore.deadLetterQueued(GROUP, record.getId(), entry);
         monitor.recordDeadLettered();
         log.error("Gave up on coupon issue entry {} after {} deliveries: {}", record.getId(), handedOut,
                 record.getValue());
@@ -290,15 +282,15 @@ public class CouponIssueWorker implements SmartLifecycle {
                 .build());
     }
 
-    /** Rows are committed: drop the pending marks, then acknowledge and delete the entries. */
+    /** Rows are committed: drop the pending marks, acknowledge and delete the entries, in one step. */
     private void finish(List<QueuedClaim> written) {
         if (written.isEmpty()) {
             return;
         }
-        written.forEach(c -> couponStockStore.confirmClaim(c.promotionId(), c.userId()));
-        RecordId[] ids = written.stream().map(QueuedClaim::id).toArray(RecordId[]::new);
-        redis.opsForStream().acknowledge(CouponStockStore.ISSUE_STREAM, GROUP, ids);
-        redis.opsForStream().delete(CouponStockStore.ISSUE_STREAM, ids);
+        couponStockStore.completeQueued(GROUP,
+                written.stream().map(QueuedClaim::id).toList(),
+                written.stream().map(QueuedClaim::promotionId).toList(),
+                written.stream().map(QueuedClaim::userId).toList());
         monitor.recordWritten(written.size());
     }
 

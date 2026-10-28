@@ -16,6 +16,7 @@ import java.util.function.BiPredicate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
@@ -58,6 +59,13 @@ public class CouponStockStore {
             RedisScript.of(new ClassPathResource("redis/coupon-claim.lua"), Long.class);
     private static final RedisScript<Long> CLAIM_AND_ENQUEUE =
             RedisScript.of(new ClassPathResource("redis/coupon-claim-async.lua"), Long.class);
+    @SuppressWarnings("rawtypes")
+    private static final RedisScript<List> QUEUE_STUCK =
+            RedisScript.of(new ClassPathResource("redis/coupon-queue-stuck.lua"), List.class);
+    private static final RedisScript<Long> QUEUE_COMPLETE =
+            RedisScript.of(new ClassPathResource("redis/coupon-queue-complete.lua"), Long.class);
+    private static final RedisScript<Long> QUEUE_DEAD_LETTER =
+            RedisScript.of(new ClassPathResource("redis/coupon-queue-dead-letter.lua"), Long.class);
     private static final RedisScript<Long> UNCLAIM =
             RedisScript.of(new ClassPathResource("redis/coupon-unclaim.lua"), Long.class);
 
@@ -203,6 +211,48 @@ public class CouponStockStore {
     /** The user's claim is taken but its MySQL row is not written yet. */
     public boolean isPending(Long promotionId, String userId) {
         return redis.opsForHash().hasKey(pendingKey(promotionId), userId);
+    }
+
+    /** A queue entry handed out and not acknowledged, and how many times it was handed out. */
+    public record StuckEntry(RecordId id, long deliveries) {
+    }
+
+    /** Entries of {@link #ISSUE_STREAM} unacknowledged for at least {@code idle}, oldest first. */
+    public List<StuckEntry> stuckQueued(String group, Duration idle, int count) {
+        List<?> flat = redis.execute(QUEUE_STUCK, List.of(ISSUE_STREAM), group,
+                String.valueOf(idle.toMillis()), String.valueOf(count));
+        List<StuckEntry> stuck = new ArrayList<>();
+        for (int i = 0; flat != null && i + 1 < flat.size(); i += 2) {
+            stuck.add(new StuckEntry(RecordId.of((String) flat.get(i)), Long.parseLong((String) flat.get(i + 1))));
+        }
+        return stuck;
+    }
+
+    /**
+     * Queue entries whose rows are written: their pending marks are dropped and they are
+     * acknowledged and deleted, in one step. The three lists are entry by entry.
+     */
+    public void completeQueued(String group, List<RecordId> ids, List<Long> promotionIds, List<String> userIds) {
+        List<String> keys = new ArrayList<>(ids.size() + 1);
+        keys.add(ISSUE_STREAM);
+        promotionIds.forEach(id -> keys.add(pendingKey(id)));
+        List<String> args = new ArrayList<>(2 * ids.size() + 1);
+        args.add(group);
+        ids.forEach(id -> args.add(id.getValue()));
+        args.addAll(userIds);
+        redis.execute(QUEUE_COMPLETE, keys, args.toArray());
+    }
+
+    /** Moves a queue entry, with these fields, to {@link #ISSUE_DEAD_LETTER} in one step. */
+    public void deadLetterQueued(String group, RecordId id, Map<String, String> fields) {
+        List<String> args = new ArrayList<>(2 * fields.size() + 2);
+        args.add(group);
+        args.add(id.getValue());
+        fields.forEach((field, value) -> {
+            args.add(field);
+            args.add(value);
+        });
+        redis.execute(QUEUE_DEAD_LETTER, List.of(ISSUE_STREAM, ISSUE_DEAD_LETTER), args.toArray());
     }
 
     /** Coupons on which the user's claim is pending, and those whose queued claim failed. */
