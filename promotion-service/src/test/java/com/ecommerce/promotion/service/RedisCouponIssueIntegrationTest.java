@@ -13,6 +13,7 @@ import com.ecommerce.promotion.model.enumeration.DiscountType;
 import com.ecommerce.promotion.model.enumeration.UsageType;
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import com.ecommerce.promotion.repository.PromotionRepository;
+import com.ecommerce.promotion.viewmodel.CouponClaimStatusVm;
 import com.ecommerce.promotion.viewmodel.StorefrontCouponVm;
 import java.time.Duration;
 import java.time.Instant;
@@ -222,6 +223,7 @@ class RedisCouponIssueIntegrationTest {
         StorefrontCouponVm mine = asUser("lister", this::findInList).apply(coupon.getId());
         assertEquals(2, mine.issuedCount());
         assertTrue(mine.claimed());
+        assertEquals(CouponClaimStatusVm.Status.ISSUED, mine.issueStatus());
 
         SecurityContextHolder.clearContext();
         StorefrontCouponVm anonymous = findInList(coupon.getId());

@@ -1,12 +1,15 @@
 package com.ecommerce.promotion.service;
 
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiPredicate;
@@ -14,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -199,6 +203,33 @@ public class CouponStockStore {
     /** The user's claim is taken but its MySQL row is not written yet. */
     public boolean isPending(Long promotionId, String userId) {
         return redis.opsForHash().hasKey(pendingKey(promotionId), userId);
+    }
+
+    /** Coupons on which the user's claim is pending, and those whose queued claim failed. */
+    public record ClaimMarks(Set<Long> pending, Set<Long> failed) {
+    }
+
+    /** {@link #isPending} and {@link #hasFailed} for many coupons in one round trip. */
+    public ClaimMarks claimMarks(List<Long> promotionIds, String userId) {
+        byte[] user = userId.getBytes(StandardCharsets.UTF_8);
+        List<Object> answers = redis.executePipelined((RedisCallback<Object>) connection -> {
+            for (Long id : promotionIds) {
+                connection.hashCommands().hExists(pendingKey(id).getBytes(StandardCharsets.UTF_8), user);
+                connection.hashCommands().hExists(failedKey(id).getBytes(StandardCharsets.UTF_8), user);
+            }
+            return null;
+        });
+        Set<Long> pending = new HashSet<>();
+        Set<Long> failed = new HashSet<>();
+        for (int i = 0; i < promotionIds.size(); i++) {
+            if (Boolean.TRUE.equals(answers.get(2 * i))) {
+                pending.add(promotionIds.get(i));
+            }
+            if (Boolean.TRUE.equals(answers.get(2 * i + 1))) {
+                failed.add(promotionIds.get(i));
+            }
+        }
+        return new ClaimMarks(pending, failed);
     }
 
     /** The user's queued claim was given up on and the coupon given back. */

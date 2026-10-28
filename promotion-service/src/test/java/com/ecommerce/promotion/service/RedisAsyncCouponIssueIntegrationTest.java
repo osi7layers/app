@@ -16,6 +16,8 @@ import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import com.ecommerce.promotion.repository.PromotionRepository;
 import com.ecommerce.promotion.service.CouponStockStore.ClaimResult;
 import com.ecommerce.promotion.viewmodel.CouponClaimStatusVm;
+import com.ecommerce.promotion.viewmodel.CouponClaimStatusVm.Status;
+import com.ecommerce.promotion.viewmodel.StorefrontCouponVm;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -27,6 +29,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
@@ -73,6 +76,8 @@ class RedisAsyncCouponIssueIntegrationTest {
 
     @Autowired
     private PromotionIssueService issueService;
+    @Autowired
+    private StorefrontCouponService storefrontCouponService;
     @Autowired
     private CouponStockStore couponStockStore;
     @Autowired
@@ -124,6 +129,33 @@ class RedisAsyncCouponIssueIntegrationTest {
         CouponClaimStatusVm issued = statusOf("poller", coupon.getId());
         assertEquals(issuedRowId(coupon, "poller"), issued.issueId());
         assertEquals(CouponClaimStatusVm.Status.NONE, statusOf("someone-else", coupon.getId()).status());
+    }
+
+    @Test
+    void listTellsPendingIssuedAndFailedClaims() {
+        Promotion pending = openCoupon(5);
+        Promotion issued = openCoupon(5);
+        Promotion failed = openCoupon(5);
+        Promotion untouched = openCoupon(5);
+        // Marks only, no queue entry, so the worker leaves them as they are.
+        redisTemplate.opsForHash().put(CouponStockStore.pendingKey(pending.getId()), "lister", "1");
+        insertIssue(issued, "lister");
+        redisTemplate.opsForHash().put(CouponStockStore.failedKey(failed.getId()), "lister", "1");
+
+        Map<Long, StorefrontCouponVm> cards = asUser("lister", () -> storefrontCouponService.listCoupons()).stream()
+                .collect(Collectors.toMap(StorefrontCouponVm::promotionId, Function.identity()));
+
+        assertEquals(Status.PENDING, cards.get(pending.getId()).issueStatus());
+        assertFalse(cards.get(pending.getId()).claimed());
+        assertEquals(Status.ISSUED, cards.get(issued.getId()).issueStatus());
+        assertTrue(cards.get(issued.getId()).claimed());
+        assertEquals(Status.FAILED, cards.get(failed.getId()).issueStatus());
+        assertEquals(Status.NONE, cards.get(untouched.getId()).issueStatus());
+
+        StorefrontCouponVm anonymous = storefrontCouponService.listCoupons().stream()
+                .filter(c -> c.promotionId().equals(issued.getId())).findFirst().orElseThrow();
+        assertEquals(Status.NONE, anonymous.issueStatus());
+        assertFalse(anonymous.claimed());
     }
 
     @Test
