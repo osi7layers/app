@@ -28,7 +28,8 @@ import org.springframework.stereotype.Component;
  *       claim time</li>
  * </ul>
  * The {@code {id}} hash tag keeps both keys in one slot, so a script can touch them together
- * on a Redis Cluster too.
+ * on a Redis Cluster too. With redis-async, winners are also queued on {@link #ISSUE_STREAM}
+ * for {@code CouponIssueWorker} to write to MySQL.
  *
  * <p>MySQL ({@code promotion_issue}) stays the source of truth. When the keys are missing
  * (first claim, or Redis lost its data) they are rebuilt from it; one pod rebuilds while the
@@ -44,8 +45,13 @@ public class CouponStockStore {
     private static final Duration LOAD_WAIT = Duration.ofSeconds(3);
     private static final long LOAD_POLL_MILLIS = 50;
 
+    /** Winners waiting for their MySQL row (redis-async). One stream for all coupons. */
+    public static final String ISSUE_STREAM = "coupon:issue-stream";
+
     private static final RedisScript<Long> CLAIM =
             RedisScript.of(new ClassPathResource("redis/coupon-claim.lua"), Long.class);
+    private static final RedisScript<Long> CLAIM_AND_ENQUEUE =
+            RedisScript.of(new ClassPathResource("redis/coupon-claim-async.lua"), Long.class);
     private static final RedisScript<Long> UNCLAIM =
             RedisScript.of(new ClassPathResource("redis/coupon-unclaim.lua"), Long.class);
 
@@ -86,6 +92,22 @@ public class CouponStockStore {
     public ClaimResult tryClaim(Long promotionId, String userId) {
         Long result = redis.execute(CLAIM, claimKeys(promotionId), userId,
                 String.valueOf(Instant.now().toEpochMilli()));
+        return toClaimResult(result);
+    }
+
+    /**
+     * Like {@link #tryClaim}, and a winner is queued on {@link #ISSUE_STREAM} in the same step,
+     * so the stock never drops without a message for the worker.
+     */
+    public ClaimResult tryClaimAndEnqueue(Long promotionId, String userId) {
+        List<String> keys = List.of(stockKey(promotionId), usersKey(promotionId), pendingKey(promotionId),
+                ISSUE_STREAM);
+        Long result = redis.execute(CLAIM_AND_ENQUEUE, keys, userId,
+                String.valueOf(Instant.now().toEpochMilli()), String.valueOf(promotionId));
+        return toClaimResult(result);
+    }
+
+    private static ClaimResult toClaimResult(Long result) {
         return switch (result == null ? -1 : result.intValue()) {
             case 0 -> ClaimResult.CLAIMED;
             case 1 -> ClaimResult.SOLD_OUT;
