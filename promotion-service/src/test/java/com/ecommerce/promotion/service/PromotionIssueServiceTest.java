@@ -183,6 +183,18 @@ class PromotionIssueServiceTest {
     }
 
     @Test
+    void redisOutageWithoutAMysqlRowIsUnavailableRatherThanNone() {
+        PromotionIssueService async = serviceWith(PromotionIssueProperties.Store.REDIS_ASYNC);
+        when(store.isPending(PROMOTION_ID, USER_ID)).thenThrow(new RedisConnectionFailureException("down"));
+        when(store.hasFailed(PROMOTION_ID, USER_ID)).thenThrow(new RedisConnectionFailureException("down"));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> async.claimStatus(PROMOTION_ID));
+
+        assertEquals("PRM-6004", ex.getErrorCode());
+        assertEquals(503, ex.getStatus().value());
+    }
+
+    @Test
     void dbStoreStatusComesFromMysqlOnly() {
         PromotionIssueService db = serviceWith(PromotionIssueProperties.Store.DB);
 

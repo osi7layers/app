@@ -101,29 +101,37 @@ public class PromotionIssueService {
      * <p>Redis pending is read before MySQL: the worker writes the row and only then drops the
      * pending mark, so a claim is always found in one of the two. Read the other way round, a
      * claim written in between would be found in neither and read as NONE.</p>
+     *
+     * <p>With Redis down, a row in MySQL still answers ISSUED. Without one, a queued claim
+     * cannot be told from no claim, so the answer is 503 (PRM-6004) and the page polls again
+     * later, rather than NONE, which it would show as a failure.</p>
      */
     public CouponClaimStatusVm claimStatus(Long promotionId) {
         String userId = AuthenticationUtils.requireUserId();
-        if (properties.usesRedis() && redisAnswers(() -> couponStockStore.isPending(promotionId, userId))) {
+        boolean redis = properties.usesRedis();
+        Boolean pending = redis ? redisAnswer(() -> couponStockStore.isPending(promotionId, userId)) : Boolean.FALSE;
+        if (Boolean.TRUE.equals(pending)) {
             return CouponClaimStatusVm.pending(promotionId, queueMonitor.pollAfterMs());
         }
         Optional<PromotionIssue> issued = promotionIssueRepository.findByPromotion_IdAndUserId(promotionId, userId);
         if (issued.isPresent()) {
             return CouponClaimStatusVm.issued(promotionId, issued.get().getId(), issued.get().getIssuedAt());
         }
-        if (properties.usesRedis() && redisAnswers(() -> couponStockStore.hasFailed(promotionId, userId))) {
-            return CouponClaimStatusVm.of(promotionId, CouponClaimStatusVm.Status.FAILED);
+        Boolean failed = redis ? redisAnswer(() -> couponStockStore.hasFailed(promotionId, userId)) : Boolean.FALSE;
+        if (pending == null || failed == null) {
+            throw BusinessException.of(ErrorCode.COUPON_STORE_UNAVAILABLE);
         }
-        return CouponClaimStatusVm.of(promotionId, CouponClaimStatusVm.Status.NONE);
+        return CouponClaimStatusVm.of(promotionId,
+                failed ? CouponClaimStatusVm.Status.FAILED : CouponClaimStatusVm.Status.NONE);
     }
 
-    /** A status read only: with Redis down, answer from MySQL rather than fail the poll. */
-    private static boolean redisAnswers(Supplier<Boolean> check) {
+    /** A Redis check for a status read; null when Redis cannot answer. */
+    private static Boolean redisAnswer(Supplier<Boolean> check) {
         try {
             return Boolean.TRUE.equals(check.get());
         } catch (DataAccessException e) {
-            log.warn("Coupon store unavailable, answering claim status from MySQL: {}", e.getMessage());
-            return false;
+            log.warn("Coupon store unavailable while reading a claim status: {}", e.getMessage());
+            return null;
         }
     }
 
