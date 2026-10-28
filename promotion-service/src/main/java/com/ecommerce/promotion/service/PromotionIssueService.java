@@ -177,7 +177,8 @@ public class PromotionIssueService {
         return new PromotionIssueVm(saved.getId(), promotionId, userId, saved.getIssuedAt());
     }
 
-    private boolean isDuplicateIssue(DataIntegrityViolationException ex) {
+    /** The user already has this coupon in MySQL (the unique key on promotion and user). */
+    static boolean isDuplicateIssue(DataIntegrityViolationException ex) {
         String message = ex.getMostSpecificCause().getMessage();
         return message != null && message.contains(DUPLICATE_ISSUE_CONSTRAINT);
     }

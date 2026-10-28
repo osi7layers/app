@@ -25,6 +25,12 @@ public class PromotionIssueProperties {
      */
     private Duration staleClaimAfter = Duration.ofSeconds(60);
 
+    /** redis-async only: how many queued winners the worker writes to MySQL in one transaction. */
+    private int workerBatchSize = 100;
+
+    /** redis-async only: how long the worker waits before reading again when the queue was empty. */
+    private Duration workerPollInterval = Duration.ofMillis(200);
+
     /** Whether stock is kept in Redis (both Redis stores), so the Redis keys must be kept in step. */
     public boolean usesRedis() {
         return store == Store.REDIS || store == Store.REDIS_ASYNC;
