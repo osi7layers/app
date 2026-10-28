@@ -14,6 +14,7 @@ import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.Limit;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.PendingMessagesSummary;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -124,7 +125,10 @@ public class CouponIssueQueueMonitor {
             List<MapRecord<String, Object, Object>> oldest = redis.opsForStream()
                     .range(CouponStockStore.ISSUE_STREAM, Range.unbounded(), Limit.limit().count(1));
             if (oldest != null && !oldest.isEmpty()) {
-                oldestAgeMs = Math.max(0, System.currentTimeMillis() - oldest.get(0).getId().getTimestamp());
+                // Entry ids carry the Redis server's clock, so the age is measured against it.
+                Long serverMs = redis.execute((RedisCallback<Long>) connection -> connection.serverCommands().time());
+                long nowMs = serverMs == null ? System.currentTimeMillis() : serverMs;
+                oldestAgeMs = Math.max(0, nowMs - oldest.get(0).getId().getTimestamp());
             }
             PendingMessagesSummary summary =
                     redis.opsForStream().pending(CouponStockStore.ISSUE_STREAM, CouponIssueWorker.GROUP);
