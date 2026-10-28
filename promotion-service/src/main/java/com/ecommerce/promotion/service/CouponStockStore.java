@@ -47,6 +47,8 @@ public class CouponStockStore {
 
     /** Winners waiting for their MySQL row (redis-async). One stream for all coupons. */
     public static final String ISSUE_STREAM = "coupon:issue-stream";
+    /** Queue entries the worker gave up on, kept for a person to look at. */
+    public static final String ISSUE_DEAD_LETTER = "coupon:issue-dlq";
 
     private static final RedisScript<Long> CLAIM =
             RedisScript.of(new ClassPathResource("redis/coupon-claim.lua"), Long.class);
@@ -70,6 +72,11 @@ public class CouponStockStore {
 
     static String pendingKey(Long promotionId) {
         return "coupon:{" + promotionId + "}:pending";
+    }
+
+    /** Users whose queued claim was given up on (redis-async), with the time. */
+    static String failedKey(Long promotionId) {
+        return "coupon:{" + promotionId + "}:failed";
     }
 
     private static List<String> claimKeys(Long promotionId) {
@@ -189,9 +196,16 @@ public class CouponStockStore {
         redis.opsForValue().setIfAbsent(stockKey(promotionId), String.valueOf(Math.max(0, issueLimit)));
     }
 
+    /** Remembers that the user's queued claim was given up on, so their status can say so. */
+    public void markFailed(Long promotionId, String userId) {
+        redis.opsForHash().put(failedKey(promotionId), userId, String.valueOf(Instant.now().toEpochMilli()));
+    }
+
     /** Removes a coupon's keys, e.g. after the promotion is deleted. */
     public void evict(Long promotionId) {
-        redis.delete(claimKeys(promotionId));
+        List<String> keys = new ArrayList<>(claimKeys(promotionId));
+        keys.add(failedKey(promotionId));
+        redis.delete(keys);
     }
 
     /**

@@ -2,6 +2,7 @@ package com.ecommerce.promotion.service;
 
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ecommerce.promotion.model.Promotion;
@@ -24,8 +25,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.StreamInfo.XInfoConsumer;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -35,7 +38,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest(properties = {
         "promotion.issue.store=redis-async",
         "promotion.issue.count-sync-interval=1h",
-        "promotion.issue.worker-poll-interval=50ms"
+        "promotion.issue.worker-poll-interval=50ms",
+        "promotion.issue.worker-reclaim-interval=100ms",
+        "promotion.issue.worker-claim-idle=300ms",
+        "promotion.issue.worker-max-deliveries=2",
+        "promotion.issue.worker-consumer-expiry=500ms"
 })
 @Testcontainers(disabledWithoutDocker = true)
 class RedisAsyncCouponIssueIntegrationTest {
@@ -96,6 +103,40 @@ class RedisAsyncCouponIssueIntegrationTest {
         assertEquals(List.of("d1", "d2", "d3"), issuedUsers(coupon).stream().sorted().toList());
     }
 
+    @Test
+    void entryLeftByADeadPodIsTakenOverAndWritten() {
+        Promotion coupon = openCoupon(3);
+        enqueueTakenBy("dead-pod", coupon, "orphan");
+
+        await().atMost(WAIT).until(() -> issuedUsers(coupon).contains("orphan") && queuedUsers(coupon).isEmpty());
+    }
+
+    @Test
+    void entryThatKeepsFailingIsDeadLetteredAndTheCouponGivenBack() {
+        // No such promotion: every write fails on the foreign key.
+        Long missing = 987_654_321L;
+        redisTemplate.opsForValue().set(CouponStockStore.stockKey(missing), "0");
+        redisTemplate.opsForSet().add(CouponStockStore.usersKey(missing), "ghost");
+        redisTemplate.opsForHash().put(CouponStockStore.pendingKey(missing), "ghost", "1");
+        enqueueRaw(missing, "ghost");
+
+        await().atMost(WAIT).until(() -> deadLettered(missing).contains("ghost"));
+        assertEquals("1", redisTemplate.opsForValue().get(CouponStockStore.stockKey(missing)));
+        assertFalse(Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(CouponStockStore.usersKey(missing), "ghost")));
+        assertFalse(redisTemplate.opsForHash().hasKey(CouponStockStore.pendingKey(missing), "ghost"));
+        assertTrue(redisTemplate.opsForHash().hasKey(CouponStockStore.failedKey(missing), "ghost"));
+    }
+
+    @Test
+    void idleConsumerOfAnOldPodIsRemoved() {
+        await().atMost(WAIT).until(() -> Boolean.TRUE.equals(redisTemplate.hasKey(CouponStockStore.ISSUE_STREAM)));
+        redisTemplate.execute(RedisScript.of("return redis.call('XGROUP', 'CREATECONSUMER', KEYS[1], ARGV[1], ARGV[2])",
+                Long.class), List.of(CouponStockStore.ISSUE_STREAM), CouponIssueWorker.GROUP, "old-pod");
+        assertTrue(consumerNames().contains("old-pod"));
+
+        await().atMost(WAIT).until(() -> !consumerNames().contains("old-pod"));
+    }
+
     // ------------------------------------------------------------------
 
     private Promotion openCoupon(int issueLimit) {
@@ -121,12 +162,46 @@ class RedisAsyncCouponIssueIntegrationTest {
 
     /** A queue entry as the claim script writes it, without touching stock. */
     private void enqueueRaw(Promotion coupon, String userId) {
+        enqueueRaw(coupon.getId(), userId);
+    }
+
+    private void enqueueRaw(Long promotionId, String userId) {
         redisTemplate.opsForStream().add(StreamRecords.newRecord()
                 .in(CouponStockStore.ISSUE_STREAM)
-                .ofMap(Map.of("promotionId", String.valueOf(coupon.getId()),
+                .ofMap(Map.of("promotionId", String.valueOf(promotionId),
                         "userId", userId,
                         "claimedAt", String.valueOf(Instant.now().toEpochMilli()))));
     }
+
+    /**
+     * Queues an entry and hands it to another consumer in one step, before this pod's worker can
+     * read it: what a pod that died before acknowledging leaves behind.
+     */
+    private void enqueueTakenBy(String consumer, Promotion coupon, String userId) {
+        await().atMost(WAIT).until(() -> Boolean.TRUE.equals(redisTemplate.hasKey(CouponStockStore.ISSUE_STREAM)));
+        RedisScript<String> script = RedisScript.of("""
+                local id = redis.call('XADD', KEYS[1], '*', 'promotionId', ARGV[1], 'userId', ARGV[2], 'claimedAt', ARGV[3])
+                redis.call('XREADGROUP', 'GROUP', ARGV[4], ARGV[5], 'COUNT', '1000', 'STREAMS', KEYS[1], '>')
+                return id
+                """, String.class);
+        redisTemplate.execute(script, List.of(CouponStockStore.ISSUE_STREAM), String.valueOf(coupon.getId()),
+                userId, String.valueOf(Instant.now().toEpochMilli()), CouponIssueWorker.GROUP, consumer);
+    }
+
+    private List<String> deadLettered(Long promotionId) {
+        List<MapRecord<String, Object, Object>> records =
+                redisTemplate.opsForStream().range(CouponStockStore.ISSUE_DEAD_LETTER, Range.unbounded());
+        return records == null ? List.of() : records.stream()
+                .filter(r -> String.valueOf(promotionId).equals(r.getValue().get("promotionId")))
+                .map(r -> (String) r.getValue().get("userId"))
+                .toList();
+    }
+
+    private List<String> consumerNames() {
+        return redisTemplate.opsForStream().consumers(CouponStockStore.ISSUE_STREAM, CouponIssueWorker.GROUP)
+                .stream().map(XInfoConsumer::consumerName).toList();
+    }
+
 
     private List<String> issuedUsers(Promotion coupon) {
         return promotionIssueRepository.findUserIdsByPromotionId(coupon.getId());

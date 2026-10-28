@@ -31,6 +31,24 @@ public class PromotionIssueProperties {
     /** redis-async only: how long the worker waits before reading again when the queue was empty. */
     private Duration workerPollInterval = Duration.ofMillis(200);
 
+    /** redis-async only: how often the worker looks for stuck entries and gone consumers. */
+    private Duration workerReclaimInterval = Duration.ofSeconds(10);
+
+    /**
+     * redis-async only: an entry handed out this long ago and not acknowledged is taken over
+     * (its pod died, or its write failed). Longer than a batch can take.
+     */
+    private Duration workerClaimIdle = Duration.ofSeconds(30);
+
+    /**
+     * redis-async only: after this many hand-outs an entry is dead-lettered and the coupon given
+     * back. With a 30s claim idle, 10 tolerates about five minutes of MySQL outage.
+     */
+    private int workerMaxDeliveries = 10;
+
+    /** redis-async only: a consumer with nothing pending and idle this long (an old pod) is removed. */
+    private Duration workerConsumerExpiry = Duration.ofHours(1);
+
     /** Whether stock is kept in Redis (both Redis stores), so the Redis keys must be kept in step. */
     public boolean usesRedis() {
         return store == Store.REDIS || store == Store.REDIS_ASYNC;

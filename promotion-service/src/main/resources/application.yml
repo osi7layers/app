@@ -61,6 +61,13 @@ promotion:
     # redis-async only: queued winners written per MySQL transaction, and the wait when the queue is empty.
     worker-batch-size: ${PROMOTION_ISSUE_WORKER_BATCH_SIZE:100}
     worker-poll-interval: ${PROMOTION_ISSUE_WORKER_POLL_INTERVAL:200ms}
+    # redis-async only: entries not acknowledged for claim-idle are taken over; after max-deliveries
+    # they go to coupon:issue-dlq and the coupon is given back. Checked every reclaim-interval,
+    # which also removes consumers of old pods idle for consumer-expiry.
+    worker-reclaim-interval: ${PROMOTION_ISSUE_WORKER_RECLAIM_INTERVAL:10s}
+    worker-claim-idle: ${PROMOTION_ISSUE_WORKER_CLAIM_IDLE:30s}
+    worker-max-deliveries: ${PROMOTION_ISSUE_WORKER_MAX_DELIVERIES:10}
+    worker-consumer-expiry: ${PROMOTION_ISSUE_WORKER_CONSUMER_EXPIRY:1h}
 ---
 management:
   server:

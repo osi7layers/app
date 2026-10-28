@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,12 +21,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.PendingMessage;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
+import org.springframework.data.redis.connection.stream.StreamInfo.XInfoConsumer;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
+import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -41,6 +47,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>Reads do not block: a blocking read would hold a Redis connection longer than the command
  * timeout. An empty read waits {@code worker-poll-interval} instead.</p>
+ *
+ * <p>Every {@code worker-reclaim-interval} the worker also takes over entries left
+ * unacknowledged for {@code worker-claim-idle} (a pod died, or the write failed) and retries
+ * them. An entry handed out {@code worker-max-deliveries} times is moved to
+ * {@link CouponStockStore#ISSUE_DEAD_LETTER}, the user is marked failed and the coupon is given
+ * back. Consumers of old pods with nothing pending are removed.</p>
  */
 @Slf4j
 @Component
@@ -62,6 +74,7 @@ public class CouponIssueWorker implements SmartLifecycle {
     private volatile boolean running;
     private volatile boolean groupReady;
     private Thread thread;
+    private long nextMaintenance;
 
     public CouponIssueWorker(StringRedisTemplate redis,
                              CouponStockStore couponStockStore,
@@ -113,6 +126,7 @@ public class CouponIssueWorker implements SmartLifecycle {
                 if (pollOnce() == 0) {
                     pause(properties.getWorkerPollInterval());
                 }
+                maintainIfDue();
             } catch (RuntimeException e) {
                 if (mentions(e, "NOGROUP")) {
                     // The stream was removed (e.g. Redis lost its data): create the group again.
@@ -140,6 +154,95 @@ public class CouponIssueWorker implements SmartLifecycle {
         }
         write(records);
         return records.size();
+    }
+
+    private void maintainIfDue() {
+        long now = System.nanoTime();
+        if (now - nextMaintenance < 0) {
+            return;
+        }
+        nextMaintenance = now + properties.getWorkerReclaimInterval().toNanos();
+        reclaimStuck();
+        removeIdleConsumers();
+    }
+
+    /**
+     * Takes over entries no consumer acknowledged within {@code worker-claim-idle}: retried, or
+     * dead-lettered once handed out {@code worker-max-deliveries} times.
+     *
+     * @return the number of entries taken over
+     */
+    int reclaimStuck() {
+        ensureGroup();
+        Duration idle = properties.getWorkerClaimIdle();
+        Map<RecordId, Long> deliveries = new LinkedHashMap<>();
+        for (PendingMessage message : redis.opsForStream().pending(CouponStockStore.ISSUE_STREAM, GROUP,
+                Range.unbounded(), properties.getWorkerBatchSize())) {
+            if (message.getElapsedTimeSinceLastDelivery().compareTo(idle) >= 0) {
+                deliveries.put(message.getId(), message.getTotalDeliveryCount());
+            }
+        }
+        if (deliveries.isEmpty()) {
+            return 0;
+        }
+        // min-idle again here, so two pods reclaiming at once do not both take the same entry.
+        List<MapRecord<String, Object, Object>> taken = redis.opsForStream().claim(CouponStockStore.ISSUE_STREAM,
+                GROUP, consumerName, idle, deliveries.keySet().toArray(RecordId[]::new));
+        List<MapRecord<String, Object, Object>> retry = new ArrayList<>();
+        for (MapRecord<String, Object, Object> record : taken) {
+            long handedOut = deliveries.getOrDefault(record.getId(), 0L) + 1;
+            if (handedOut > properties.getWorkerMaxDeliveries()) {
+                deadLetter(record, handedOut);
+            } else {
+                retry.add(record);
+            }
+        }
+        if (!retry.isEmpty()) {
+            log.info("Retrying {} coupon issue entries left unacknowledged", retry.size());
+            write(retry);
+        }
+        return taken.size();
+    }
+
+    /**
+     * Gives up on an entry: the user is marked failed and the coupon given back, unless MySQL
+     * has the row after all. The entry is kept on the dead-letter stream.
+     */
+    private void deadLetter(MapRecord<String, Object, Object> record, long handedOut) {
+        Optional<QueuedClaim> claim = QueuedClaim.of(record);
+        if (claim.isPresent()) {
+            QueuedClaim c = claim.get();
+            if (promotionIssueRepository.findByPromotion_IdAndUserId(c.promotionId(), c.userId()).isPresent()) {
+                finish(List.of(c));
+                return;
+            }
+            // Failed first, then given back: the user's status never reads as never-claimed.
+            couponStockStore.markFailed(c.promotionId(), c.userId());
+            couponStockStore.undoClaim(c.promotionId(), c.userId(), true);
+        }
+        Map<String, String> entry = new HashMap<>();
+        record.getValue().forEach((k, v) -> entry.put(String.valueOf(k), String.valueOf(v)));
+        entry.put("sourceId", record.getId().getValue());
+        entry.put("deliveries", String.valueOf(handedOut));
+        entry.put("deadAt", String.valueOf(Instant.now().toEpochMilli()));
+        redis.opsForStream().add(StreamRecords.newRecord().in(CouponStockStore.ISSUE_DEAD_LETTER).ofMap(entry));
+        redis.opsForStream().acknowledge(CouponStockStore.ISSUE_STREAM, GROUP, record.getId());
+        redis.opsForStream().delete(CouponStockStore.ISSUE_STREAM, record.getId());
+        log.error("Gave up on coupon issue entry {} after {} deliveries: {}", record.getId(), handedOut,
+                record.getValue());
+    }
+
+    /** Pods get a new name on every start; their consumers stay in the group until removed. */
+    private void removeIdleConsumers() {
+        Duration expiry = properties.getWorkerConsumerExpiry();
+        for (XInfoConsumer consumer : redis.opsForStream().consumers(CouponStockStore.ISSUE_STREAM, GROUP)) {
+            if (!consumer.consumerName().equals(consumerName) && consumer.pendingCount() == 0
+                    && consumer.idleTime().compareTo(expiry) >= 0) {
+                redis.opsForStream().deleteConsumer(CouponStockStore.ISSUE_STREAM,
+                        Consumer.from(GROUP, consumer.consumerName()));
+                log.info("Removed idle coupon issue consumer {}", consumer.consumerName());
+            }
+        }
     }
 
     private void write(List<MapRecord<String, Object, Object>> records) {
