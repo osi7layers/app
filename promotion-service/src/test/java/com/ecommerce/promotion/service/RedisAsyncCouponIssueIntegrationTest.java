@@ -89,6 +89,8 @@ class RedisAsyncCouponIssueIntegrationTest {
     private StringRedisTemplate redisTemplate;
     @Autowired
     private MeterRegistry meterRegistry;
+    @Autowired
+    private CouponIssueWorker worker;
 
     @AfterEach
     void clearSecurity() {
@@ -107,6 +109,31 @@ class RedisAsyncCouponIssueIntegrationTest {
         await().atMost(WAIT).until(() -> issuedUsers(coupon).size() == 50
                 && queuedUsers(coupon).isEmpty() && pendingCount(coupon) == 0);
         assertEquals("0", stock(coupon));
+    }
+
+    @Test
+    void claimsKeepQueuingWhileNoWorkerRunsAndAreWrittenWhenOneStarts() throws Exception {
+        Promotion coupon = openCoupon(10);
+        worker.stop();
+        try {
+            List<String> outcomes = enqueueConcurrently(coupon.getId(), 40);
+
+            Map<String, Long> counts = outcomes.stream().collect(Collectors.groupingBy(o -> o, Collectors.counting()));
+            assertEquals(10, counts.get("PENDING"));
+            assertEquals(30, counts.get("PRM-6002"));
+            assertEquals(10, queuedUsers(coupon).size());
+            assertTrue(issuedUsers(coupon).isEmpty());
+            String winner = queuedUsers(coupon).get(0);
+            assertEquals(Status.PENDING, statusOf(winner, coupon.getId()).status());
+        } finally {
+            worker.start();
+        }
+
+        await().atMost(WAIT).until(() -> issuedUsers(coupon).size() == 10
+                && queuedUsers(coupon).isEmpty() && pendingCount(coupon) == 0);
+        // Every coupon is accounted for exactly once: written, or still in stock.
+        assertEquals(10, issuedUsers(coupon).size() + Integer.parseInt(stock(coupon)));
+        assertEquals(10, issuedUsers(coupon).stream().distinct().count());
     }
 
     @Test

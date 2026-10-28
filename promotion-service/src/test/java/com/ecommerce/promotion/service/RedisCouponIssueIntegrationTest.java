@@ -77,6 +77,8 @@ class RedisCouponIssueIntegrationTest {
     private PromotionIssueRepository promotionIssueRepository;
     @Autowired
     private StringRedisTemplate redisTemplate;
+    @Autowired
+    private CouponIssueWorker worker;
 
     @AfterEach
     void clearSecurity() {
@@ -203,6 +205,16 @@ class RedisCouponIssueIntegrationTest {
         assertEquals(CouponStockStore.ClaimResult.NOT_LOADED,
                 couponStockStore.tryClaimAndEnqueue(coupon.getId(), "early"));
         assertTrue(queuedUsers(coupon).isEmpty());
+    }
+
+    @Test
+    void synchronousStoreRunsNoWorkerAndWritesBeforeAnswering() {
+        assertFalse(worker.isRunning());
+        assertFalse(issueService.queuesIssues());
+
+        Promotion coupon = openCoupon(2);
+        assertEquals("OK", claim(coupon.getId(), "direct"));
+        assertEquals(1, issuedRows(coupon));
     }
 
     @Test
