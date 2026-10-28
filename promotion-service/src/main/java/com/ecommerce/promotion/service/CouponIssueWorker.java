@@ -68,6 +68,7 @@ public class CouponIssueWorker implements SmartLifecycle {
     private final PromotionRepository promotionRepository;
     private final PromotionIssueRepository promotionIssueRepository;
     private final PromotionIssueProperties properties;
+    private final CouponIssueQueueMonitor monitor;
     private final TransactionTemplate transactionTemplate;
     private final String consumerName = consumerName();
 
@@ -81,12 +82,14 @@ public class CouponIssueWorker implements SmartLifecycle {
                              PromotionRepository promotionRepository,
                              PromotionIssueRepository promotionIssueRepository,
                              PromotionIssueProperties properties,
+                             CouponIssueQueueMonitor monitor,
                              PlatformTransactionManager transactionManager) {
         this.redis = redis;
         this.couponStockStore = couponStockStore;
         this.promotionRepository = promotionRepository;
         this.promotionIssueRepository = promotionIssueRepository;
         this.properties = properties;
+        this.monitor = monitor;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -197,6 +200,7 @@ public class CouponIssueWorker implements SmartLifecycle {
                 retry.add(record);
             }
         }
+        monitor.recordReclaimed(taken.size());
         if (!retry.isEmpty()) {
             log.info("Retrying {} coupon issue entries left unacknowledged", retry.size());
             write(retry);
@@ -228,6 +232,7 @@ public class CouponIssueWorker implements SmartLifecycle {
         redis.opsForStream().add(StreamRecords.newRecord().in(CouponStockStore.ISSUE_DEAD_LETTER).ofMap(entry));
         redis.opsForStream().acknowledge(CouponStockStore.ISSUE_STREAM, GROUP, record.getId());
         redis.opsForStream().delete(CouponStockStore.ISSUE_STREAM, record.getId());
+        monitor.recordDeadLettered();
         log.error("Gave up on coupon issue entry {} after {} deliveries: {}", record.getId(), handedOut,
                 record.getValue());
     }
@@ -294,6 +299,7 @@ public class CouponIssueWorker implements SmartLifecycle {
         RecordId[] ids = written.stream().map(QueuedClaim::id).toArray(RecordId[]::new);
         redis.opsForStream().acknowledge(CouponStockStore.ISSUE_STREAM, GROUP, ids);
         redis.opsForStream().delete(CouponStockStore.ISSUE_STREAM, ids);
+        monitor.recordWritten(written.size());
     }
 
     private void ensureGroup() {

@@ -38,14 +38,16 @@ class PromotionIssueServiceTest {
     private final PromotionIssueRepository promotionIssueRepository = mock(PromotionIssueRepository.class);
     private final CouponStockStore store = mock(CouponStockStore.class);
     private final CouponWindowCache windowCache = mock(CouponWindowCache.class);
+    private final CouponIssueQueueMonitor monitor = mock(CouponIssueQueueMonitor.class);
     private PromotionIssueService service;
 
     @BeforeEach
     void setUp() {
         PromotionIssueProperties properties = new PromotionIssueProperties();
         properties.setStore(PromotionIssueProperties.Store.REDIS);
+        when(monitor.pollAfterMs()).thenReturn(1000L);
         service = new PromotionIssueService(promotionRepository, promotionIssueRepository, store,
-                windowCache, properties, mock(PlatformTransactionManager.class));
+                windowCache, properties, monitor, mock(PlatformTransactionManager.class));
         Instant now = Instant.now();
         when(windowCache.get(PROMOTION_ID)).thenReturn(Optional.of(
                 new CouponWindow(PROMOTION_ID, true, 10, now.minusSeconds(60), now.plusSeconds(60))));
@@ -57,7 +59,7 @@ class PromotionIssueServiceTest {
         PromotionIssueProperties properties = new PromotionIssueProperties();
         properties.setStore(store);
         return new PromotionIssueService(promotionRepository, promotionIssueRepository, this.store,
-                windowCache, properties, mock(PlatformTransactionManager.class));
+                windowCache, properties, monitor, mock(PlatformTransactionManager.class));
     }
 
     @AfterEach

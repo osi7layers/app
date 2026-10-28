@@ -48,6 +48,7 @@ public class PromotionIssueService {
     private final CouponStockStore couponStockStore;
     private final CouponWindowCache couponWindowCache;
     private final PromotionIssueProperties properties;
+    private final CouponIssueQueueMonitor queueMonitor;
     private final TransactionTemplate transactionTemplate;
 
     public PromotionIssueService(PromotionRepository promotionRepository,
@@ -55,12 +56,14 @@ public class PromotionIssueService {
                                  CouponStockStore couponStockStore,
                                  CouponWindowCache couponWindowCache,
                                  PromotionIssueProperties properties,
+                                 CouponIssueQueueMonitor queueMonitor,
                                  PlatformTransactionManager transactionManager) {
         this.promotionRepository = promotionRepository;
         this.promotionIssueRepository = promotionIssueRepository;
         this.couponStockStore = couponStockStore;
         this.couponWindowCache = couponWindowCache;
         this.properties = properties;
+        this.queueMonitor = queueMonitor;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -89,7 +92,7 @@ public class PromotionIssueService {
     public CouponClaimStatusVm enqueue(Long promotionId) {
         String userId = AuthenticationUtils.requireUserId();
         claimInRedis(openWindow(promotionId, Instant.now()), userId, couponStockStore::tryClaimAndEnqueue);
-        return CouponClaimStatusVm.pending(promotionId, properties.getStatusPollAfter().toMillis());
+        return CouponClaimStatusVm.pending(promotionId, queueMonitor.pollAfterMs());
     }
 
     /**
@@ -102,7 +105,7 @@ public class PromotionIssueService {
     public CouponClaimStatusVm claimStatus(Long promotionId) {
         String userId = AuthenticationUtils.requireUserId();
         if (properties.usesRedis() && redisAnswers(() -> couponStockStore.isPending(promotionId, userId))) {
-            return CouponClaimStatusVm.pending(promotionId, properties.getStatusPollAfter().toMillis());
+            return CouponClaimStatusVm.pending(promotionId, queueMonitor.pollAfterMs());
         }
         Optional<PromotionIssue> issued = promotionIssueRepository.findByPromotion_IdAndUserId(promotionId, userId);
         if (issued.isPresent()) {

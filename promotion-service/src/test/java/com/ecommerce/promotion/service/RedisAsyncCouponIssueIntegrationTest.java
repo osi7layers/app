@@ -32,6 +32,7 @@ import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -86,6 +87,8 @@ class RedisAsyncCouponIssueIntegrationTest {
     private PromotionIssueRepository promotionIssueRepository;
     @Autowired
     private StringRedisTemplate redisTemplate;
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     @AfterEach
     void clearSecurity() {
@@ -170,6 +173,21 @@ class RedisAsyncCouponIssueIntegrationTest {
         assertEquals(List.of("w1", "w2"), issuedUsers(coupon).stream().sorted().toList());
         await().atMost(WAIT).until(() -> queuedUsers(coupon).isEmpty() && pendingCount(coupon) == 0);
         assertEquals("1", stock(coupon));
+    }
+
+    @Test
+    void queueMetricsAreExported() {
+        Promotion coupon = openCoupon(2);
+        assertTrue(couponStockStore.loadIfAbsent(coupon.getId(), 2));
+        double writtenBefore = meterRegistry.get("coupon.issue.written").counter().count();
+
+        couponStockStore.tryClaimAndEnqueue(coupon.getId(), "metered");
+
+        await().atMost(WAIT).until(() -> meterRegistry.get("coupon.issue.written").counter().count() > writtenBefore);
+        for (String gauge : List.of("coupon.issue.queue.length", "coupon.issue.queue.pending",
+                "coupon.issue.queue.oldest.age", "coupon.issue.dead.letters")) {
+            assertTrue(meterRegistry.get(gauge).gauge().value() >= 0, gauge);
+        }
     }
 
     @Test
