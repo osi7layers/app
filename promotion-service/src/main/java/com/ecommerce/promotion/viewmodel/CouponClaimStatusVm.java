@@ -26,4 +26,12 @@ public record CouponClaimStatusVm(Long promotionId, Status status, Long issueId,
     public static CouponClaimStatusVm pending(Long promotionId, long pollAfterMs) {
         return new CouponClaimStatusVm(promotionId, Status.PENDING, null, null, pollAfterMs);
     }
+
+    public static CouponClaimStatusVm issued(Long promotionId, Long issueId, Instant issuedAt) {
+        return new CouponClaimStatusVm(promotionId, Status.ISSUED, issueId, issuedAt, 0);
+    }
+
+    public static CouponClaimStatusVm of(Long promotionId, Status status) {
+        return new CouponClaimStatusVm(promotionId, status, null, null, 0);
+    }
 }

@@ -196,6 +196,16 @@ public class CouponStockStore {
         redis.opsForValue().setIfAbsent(stockKey(promotionId), String.valueOf(Math.max(0, issueLimit)));
     }
 
+    /** The user's claim is taken but its MySQL row is not written yet. */
+    public boolean isPending(Long promotionId, String userId) {
+        return redis.opsForHash().hasKey(pendingKey(promotionId), userId);
+    }
+
+    /** The user's queued claim was given up on and the coupon given back. */
+    public boolean hasFailed(Long promotionId, String userId) {
+        return redis.opsForHash().hasKey(failedKey(promotionId), userId);
+    }
+
     /** Remembers that the user's queued claim was given up on, so their status can say so. */
     public void markFailed(Long promotionId, String userId) {
         redis.opsForHash().put(failedKey(promotionId), userId, String.valueOf(Instant.now().toEpochMilli()));

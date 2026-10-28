@@ -13,6 +13,7 @@ import com.ecommerce.promotion.service.CouponWindowCache.CouponWindow;
 import com.ecommerce.promotion.viewmodel.CouponClaimStatusVm;
 import com.ecommerce.promotion.viewmodel.PromotionIssueVm;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
@@ -89,6 +90,38 @@ public class PromotionIssueService {
         String userId = AuthenticationUtils.requireUserId();
         claimInRedis(openWindow(promotionId, Instant.now()), userId, couponStockStore::tryClaimAndEnqueue);
         return CouponClaimStatusVm.pending(promotionId, properties.getStatusPollAfter().toMillis());
+    }
+
+    /**
+     * The caller's claim on a coupon, for the coupon page to poll after a 202.
+     *
+     * <p>Redis pending is read before MySQL: the worker writes the row and only then drops the
+     * pending mark, so a claim is always found in one of the two. Read the other way round, a
+     * claim written in between would be found in neither and read as NONE.</p>
+     */
+    public CouponClaimStatusVm claimStatus(Long promotionId) {
+        String userId = AuthenticationUtils.requireUserId();
+        if (properties.usesRedis() && redisAnswers(() -> couponStockStore.isPending(promotionId, userId))) {
+            return CouponClaimStatusVm.pending(promotionId, properties.getStatusPollAfter().toMillis());
+        }
+        Optional<PromotionIssue> issued = promotionIssueRepository.findByPromotion_IdAndUserId(promotionId, userId);
+        if (issued.isPresent()) {
+            return CouponClaimStatusVm.issued(promotionId, issued.get().getId(), issued.get().getIssuedAt());
+        }
+        if (properties.usesRedis() && redisAnswers(() -> couponStockStore.hasFailed(promotionId, userId))) {
+            return CouponClaimStatusVm.of(promotionId, CouponClaimStatusVm.Status.FAILED);
+        }
+        return CouponClaimStatusVm.of(promotionId, CouponClaimStatusVm.Status.NONE);
+    }
+
+    /** A status read only: with Redis down, answer from MySQL rather than fail the poll. */
+    private static boolean redisAnswers(Supplier<Boolean> check) {
+        try {
+            return Boolean.TRUE.equals(check.get());
+        } catch (DataAccessException e) {
+            log.warn("Coupon store unavailable, answering claim status from MySQL: {}", e.getMessage());
+            return false;
+        }
     }
 
     private PromotionIssueVm issueWithRedis(Long promotionId, String userId, Instant now) {

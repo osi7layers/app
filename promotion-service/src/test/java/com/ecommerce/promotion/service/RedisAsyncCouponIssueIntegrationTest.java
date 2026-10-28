@@ -114,6 +114,19 @@ class RedisAsyncCouponIssueIntegrationTest {
     }
 
     @Test
+    void claimStatusMovesFromPendingToIssued() {
+        Promotion coupon = openCoupon(5);
+        assertEquals(CouponClaimStatusVm.Status.NONE, statusOf("poller", coupon.getId()).status());
+
+        asUser("poller", () -> issueService.enqueue(coupon.getId()));
+
+        await().atMost(WAIT).until(() -> statusOf("poller", coupon.getId()).status() == CouponClaimStatusVm.Status.ISSUED);
+        CouponClaimStatusVm issued = statusOf("poller", coupon.getId());
+        assertEquals(issuedRowId(coupon, "poller"), issued.issueId());
+        assertEquals(CouponClaimStatusVm.Status.NONE, statusOf("someone-else", coupon.getId()).status());
+    }
+
+    @Test
     void workerWritesQueuedWinnersToMysql() {
         Promotion coupon = openCoupon(3);
         assertTrue(couponStockStore.loadIfAbsent(coupon.getId(), 3));
@@ -172,6 +185,7 @@ class RedisAsyncCouponIssueIntegrationTest {
         assertFalse(Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(CouponStockStore.usersKey(missing), "ghost")));
         assertFalse(redisTemplate.opsForHash().hasKey(CouponStockStore.pendingKey(missing), "ghost"));
         assertTrue(redisTemplate.opsForHash().hasKey(CouponStockStore.failedKey(missing), "ghost"));
+        assertEquals(CouponClaimStatusVm.Status.FAILED, statusOf("ghost", missing).status());
     }
 
     @Test
@@ -283,6 +297,14 @@ class RedisAsyncCouponIssueIntegrationTest {
                 .stream().map(XInfoConsumer::consumerName).toList();
     }
 
+
+    private CouponClaimStatusVm statusOf(String userId, Long promotionId) {
+        return asUser(userId, () -> issueService.claimStatus(promotionId));
+    }
+
+    private Long issuedRowId(Promotion coupon, String userId) {
+        return promotionIssueRepository.findByPromotion_IdAndUserId(coupon.getId(), userId).orElseThrow().getId();
+    }
 
     private List<String> issuedUsers(Promotion coupon) {
         return promotionIssueRepository.findUserIdsByPromotionId(coupon.getId());
