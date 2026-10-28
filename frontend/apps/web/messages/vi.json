@@ -382,6 +382,7 @@
     "resultError": "Không nhận được \"{name}\". Vui lòng thử lại.",
     "retry": "Thử lại",
     "login": "Đăng nhập",
+    "recheck": "Kiểm tra lại",
     "dismiss": "Đóng",
     "emptyTitle": "Hiện chưa có mã giảm giá",
     "emptyHint": "Hãy quay lại sau để săn đợt mã tiếp theo.",

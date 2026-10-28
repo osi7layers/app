@@ -107,6 +107,7 @@ export default function CouponEventList() {
           couponName={notice.coupon.name}
           onRetry={() => handleIssue(notice.coupon)}
           onLogin={() => router.push("/login?redirect=/coupons")}
+          onRecheck={() => handleIssue(notice.coupon, true)}
           onDismiss={() => setNotice(null)}
         />
       )}

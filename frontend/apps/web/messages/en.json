@@ -382,6 +382,7 @@
     "resultError": "Couldn't get \"{name}\". Please try again.",
     "retry": "Try again",
     "login": "Log in",
+    "recheck": "Check again",
     "dismiss": "Close",
     "emptyTitle": "No coupons right now",
     "emptyHint": "Check back soon for the next drop.",

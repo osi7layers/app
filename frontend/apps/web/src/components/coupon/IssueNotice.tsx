@@ -24,11 +24,12 @@ interface IssueNoticeProps {
   couponName: string;
   onRetry?: () => void;
   onLogin?: () => void;
+  onRecheck?: () => void;
   onDismiss: () => void;
 }
 
 // Banner shown above the coupon grid after the issue button is pressed.
-export default function IssueNotice({ result, couponName, onRetry, onLogin, onDismiss }: IssueNoticeProps) {
+export default function IssueNotice({ result, couponName, onRetry, onLogin, onRecheck, onDismiss }: IssueNoticeProps) {
   const t = useTranslations("Coupons");
   const Icon =
     result === "success" ? CheckCircle2
@@ -43,6 +44,11 @@ export default function IssueNotice({ result, couponName, onRetry, onLogin, onDi
       {(result === "error" || result === "failed") && onRetry && (
         <Button size="sm" variant="danger" onClick={onRetry}>
           {t("retry")}
+        </Button>
+      )}
+      {result === "delayed" && onRecheck && (
+        <Button size="sm" variant="outline" onClick={onRecheck}>
+          {t("recheck")}
         </Button>
       )}
       {result === "loginRequired" && onLogin && (
