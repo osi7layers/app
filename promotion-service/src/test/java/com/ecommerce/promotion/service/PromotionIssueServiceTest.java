@@ -2,6 +2,7 @@ package com.ecommerce.promotion.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -10,10 +11,12 @@ import static org.mockito.Mockito.when;
 
 import com.ecommerce.commonlib.exception.BusinessException;
 import com.ecommerce.promotion.config.PromotionIssueProperties;
+import com.ecommerce.promotion.model.PromotionIssue;
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import com.ecommerce.promotion.repository.PromotionRepository;
 import com.ecommerce.promotion.service.CouponStockStore.ClaimResult;
 import com.ecommerce.promotion.service.CouponWindowCache.CouponWindow;
+import com.ecommerce.promotion.viewmodel.CouponClaimStatusVm;
 import java.time.Instant;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -35,19 +38,28 @@ class PromotionIssueServiceTest {
     private final PromotionIssueRepository promotionIssueRepository = mock(PromotionIssueRepository.class);
     private final CouponStockStore store = mock(CouponStockStore.class);
     private final CouponWindowCache windowCache = mock(CouponWindowCache.class);
+    private final CouponIssueQueueMonitor monitor = mock(CouponIssueQueueMonitor.class);
     private PromotionIssueService service;
 
     @BeforeEach
     void setUp() {
         PromotionIssueProperties properties = new PromotionIssueProperties();
         properties.setStore(PromotionIssueProperties.Store.REDIS);
+        when(monitor.pollAfterMs()).thenReturn(1000L);
         service = new PromotionIssueService(promotionRepository, promotionIssueRepository, store,
-                windowCache, properties, mock(PlatformTransactionManager.class));
+                windowCache, properties, monitor, mock(PlatformTransactionManager.class));
         Instant now = Instant.now();
         when(windowCache.get(PROMOTION_ID)).thenReturn(Optional.of(
                 new CouponWindow(PROMOTION_ID, true, 10, now.minusSeconds(60), now.plusSeconds(60))));
         Jwt jwt = Jwt.withTokenValue("t").header("alg", "none").subject(USER_ID).build();
         SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+    }
+
+    private PromotionIssueService serviceWith(PromotionIssueProperties.Store store) {
+        PromotionIssueProperties properties = new PromotionIssueProperties();
+        properties.setStore(store);
+        return new PromotionIssueService(promotionRepository, promotionIssueRepository, this.store,
+                windowCache, properties, monitor, mock(PlatformTransactionManager.class));
     }
 
     @AfterEach
@@ -95,6 +107,106 @@ class PromotionIssueServiceTest {
         when(store.tryClaim(PROMOTION_ID, USER_ID)).thenReturn(ClaimResult.ALREADY_CLAIMED);
         assertEquals("PRM-6003",
                 assertThrows(BusinessException.class, () -> service.issue(PROMOTION_ID)).getErrorCode());
+    }
+
+    @Test
+    void queuedClaimAnswersPendingWithoutWritingMysql() {
+        PromotionIssueService async = serviceWith(PromotionIssueProperties.Store.REDIS_ASYNC);
+        when(store.tryClaimAndEnqueue(PROMOTION_ID, USER_ID)).thenReturn(ClaimResult.CLAIMED);
+
+        CouponClaimStatusVm status = async.enqueue(PROMOTION_ID);
+
+        assertTrue(async.queuesIssues());
+        assertEquals(CouponClaimStatusVm.Status.PENDING, status.status());
+        assertEquals(1000, status.pollAfterMs());
+        verify(store, never()).tryClaim(any(), any());
+        verify(promotionIssueRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void queuedClaimHasTheSameErrorsAsADirectOne() {
+        PromotionIssueService async = serviceWith(PromotionIssueProperties.Store.REDIS_ASYNC);
+
+        when(store.tryClaimAndEnqueue(PROMOTION_ID, USER_ID)).thenReturn(ClaimResult.SOLD_OUT);
+        assertEquals("PRM-6002",
+                assertThrows(BusinessException.class, () -> async.enqueue(PROMOTION_ID)).getErrorCode());
+
+        when(store.tryClaimAndEnqueue(PROMOTION_ID, USER_ID)).thenReturn(ClaimResult.ALREADY_CLAIMED);
+        assertEquals("PRM-6003",
+                assertThrows(BusinessException.class, () -> async.enqueue(PROMOTION_ID)).getErrorCode());
+
+        when(store.tryClaimAndEnqueue(PROMOTION_ID, USER_ID)).thenThrow(new RedisConnectionFailureException("down"));
+        assertEquals("PRM-6004",
+                assertThrows(BusinessException.class, () -> async.enqueue(PROMOTION_ID)).getErrorCode());
+    }
+
+    @Test
+    void pendingClaimIsReadBeforeMysql() {
+        PromotionIssueService async = serviceWith(PromotionIssueProperties.Store.REDIS_ASYNC);
+        when(store.isPending(PROMOTION_ID, USER_ID)).thenReturn(true);
+
+        assertEquals(CouponClaimStatusVm.Status.PENDING, async.claimStatus(PROMOTION_ID).status());
+        verify(promotionIssueRepository, never()).findByPromotion_IdAndUserId(any(), any());
+    }
+
+    @Test
+    void writtenClaimIsIssuedWithItsRow() {
+        PromotionIssueService async = serviceWith(PromotionIssueProperties.Store.REDIS_ASYNC);
+        Instant claimedAt = Instant.now();
+        when(promotionIssueRepository.findByPromotion_IdAndUserId(PROMOTION_ID, USER_ID)).thenReturn(Optional.of(
+                PromotionIssue.builder().id(42L).userId(USER_ID).issuedAt(claimedAt).build()));
+
+        CouponClaimStatusVm status = async.claimStatus(PROMOTION_ID);
+
+        assertEquals(CouponClaimStatusVm.Status.ISSUED, status.status());
+        assertEquals(42L, status.issueId());
+        assertEquals(claimedAt, status.issuedAt());
+    }
+
+    @Test
+    void givenBackClaimIsFailedAndNoClaimIsNone() {
+        PromotionIssueService async = serviceWith(PromotionIssueProperties.Store.REDIS_ASYNC);
+        assertEquals(CouponClaimStatusVm.Status.NONE, async.claimStatus(PROMOTION_ID).status());
+
+        when(store.hasFailed(PROMOTION_ID, USER_ID)).thenReturn(true);
+        assertEquals(CouponClaimStatusVm.Status.FAILED, async.claimStatus(PROMOTION_ID).status());
+    }
+
+    @Test
+    void redisOutageAnswersTheStatusFromMysql() {
+        PromotionIssueService async = serviceWith(PromotionIssueProperties.Store.REDIS_ASYNC);
+        when(store.isPending(PROMOTION_ID, USER_ID)).thenThrow(new RedisConnectionFailureException("down"));
+        when(promotionIssueRepository.findByPromotion_IdAndUserId(PROMOTION_ID, USER_ID)).thenReturn(Optional.of(
+                PromotionIssue.builder().id(7L).userId(USER_ID).issuedAt(Instant.now()).build()));
+
+        assertEquals(CouponClaimStatusVm.Status.ISSUED, async.claimStatus(PROMOTION_ID).status());
+    }
+
+    @Test
+    void redisOutageWithoutAMysqlRowIsUnavailableRatherThanNone() {
+        PromotionIssueService async = serviceWith(PromotionIssueProperties.Store.REDIS_ASYNC);
+        when(store.isPending(PROMOTION_ID, USER_ID)).thenThrow(new RedisConnectionFailureException("down"));
+        when(store.hasFailed(PROMOTION_ID, USER_ID)).thenThrow(new RedisConnectionFailureException("down"));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> async.claimStatus(PROMOTION_ID));
+
+        assertEquals("PRM-6004", ex.getErrorCode());
+        assertEquals(503, ex.getStatus().value());
+    }
+
+    @Test
+    void dbStoreStatusComesFromMysqlOnly() {
+        PromotionIssueService db = serviceWith(PromotionIssueProperties.Store.DB);
+
+        assertEquals(CouponClaimStatusVm.Status.NONE, db.claimStatus(PROMOTION_ID).status());
+        verify(store, never()).isPending(any(), any());
+        verify(store, never()).hasFailed(any(), any());
+    }
+
+    @Test
+    void synchronousStoresDoNotQueue() {
+        assertEquals(false, service.queuesIssues());
+        assertEquals(false, serviceWith(PromotionIssueProperties.Store.DB).queuesIssues());
     }
 
     @Test

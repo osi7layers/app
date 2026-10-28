@@ -5,7 +5,6 @@ import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessException;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
@@ -15,11 +14,13 @@ import org.springframework.stereotype.Component;
  * Gives back Redis claims that never got their MySQL row. Without this, a request that timed
  * out on Redis while the claim script still ran leaves the user marked as claimed with no
  * coupon, and one coupon short. Runs on every pod; giving back is idempotent.
+ *
+ * <p>Synchronous Redis store only. With redis-async a pending claim is a winner still queued
+ * for the worker, not an abandoned one: giving it back would let the coupon be issued twice.</p>
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@ConditionalOnProperty(prefix = "promotion.issue", name = "store", havingValue = "redis", matchIfMissing = true)
 public class StaleClaimSettler implements SchedulingConfigurer {
 
     private static final Duration INTERVAL = Duration.ofSeconds(10);
@@ -30,7 +31,9 @@ public class StaleClaimSettler implements SchedulingConfigurer {
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
-        registrar.addFixedDelayTask(this::settle, INTERVAL);
+        if (properties.getStore() == PromotionIssueProperties.Store.REDIS) {
+            registrar.addFixedDelayTask(this::settle, INTERVAL);
+        }
     }
 
     public int settle() {

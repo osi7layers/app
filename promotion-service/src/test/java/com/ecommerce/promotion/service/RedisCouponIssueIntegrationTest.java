@@ -13,6 +13,7 @@ import com.ecommerce.promotion.model.enumeration.DiscountType;
 import com.ecommerce.promotion.model.enumeration.UsageType;
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import com.ecommerce.promotion.repository.PromotionRepository;
+import com.ecommerce.promotion.viewmodel.CouponClaimStatusVm;
 import com.ecommerce.promotion.viewmodel.StorefrontCouponVm;
 import java.time.Duration;
 import java.time.Instant;
@@ -32,6 +33,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.domain.Range;
+import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -74,6 +77,8 @@ class RedisCouponIssueIntegrationTest {
     private PromotionIssueRepository promotionIssueRepository;
     @Autowired
     private StringRedisTemplate redisTemplate;
+    @Autowired
+    private CouponIssueWorker worker;
 
     @AfterEach
     void clearSecurity() {
@@ -178,6 +183,41 @@ class RedisCouponIssueIntegrationTest {
     }
 
     @Test
+    void claimAndEnqueueQueuesEachWinnerOnce() {
+        Promotion coupon = openCoupon(2);
+        assertTrue(couponStockStore.loadIfAbsent(coupon.getId(), 2));
+
+        assertEquals(CouponStockStore.ClaimResult.CLAIMED, couponStockStore.tryClaimAndEnqueue(coupon.getId(), "q1"));
+        assertEquals(CouponStockStore.ClaimResult.ALREADY_CLAIMED,
+                couponStockStore.tryClaimAndEnqueue(coupon.getId(), "q1"));
+        assertEquals(CouponStockStore.ClaimResult.CLAIMED, couponStockStore.tryClaimAndEnqueue(coupon.getId(), "q2"));
+        assertEquals(CouponStockStore.ClaimResult.SOLD_OUT, couponStockStore.tryClaimAndEnqueue(coupon.getId(), "q3"));
+
+        assertEquals(List.of("q1", "q2"), queuedUsers(coupon));
+        assertEquals("0", stock(coupon));
+        assertEquals(2L, redisTemplate.opsForHash().size(CouponStockStore.pendingKey(coupon.getId())));
+    }
+
+    @Test
+    void claimAndEnqueueQueuesNothingUntilTheCouponIsLoaded() {
+        Promotion coupon = openCoupon(2);
+
+        assertEquals(CouponStockStore.ClaimResult.NOT_LOADED,
+                couponStockStore.tryClaimAndEnqueue(coupon.getId(), "early"));
+        assertTrue(queuedUsers(coupon).isEmpty());
+    }
+
+    @Test
+    void synchronousStoreRunsNoWorkerAndWritesBeforeAnswering() {
+        assertFalse(worker.isRunning());
+        assertFalse(issueService.queuesIssues());
+
+        Promotion coupon = openCoupon(2);
+        assertEquals("OK", claim(coupon.getId(), "direct"));
+        assertEquals(1, issuedRows(coupon));
+    }
+
+    @Test
     void upcomingCouponIsNotOpenAndUnknownCouponIsNotFound() {
         Instant now = Instant.now();
         Promotion upcoming = saveCoupon(5, now.plus(1, ChronoUnit.DAYS), now.plus(2, ChronoUnit.DAYS));
@@ -195,6 +235,7 @@ class RedisCouponIssueIntegrationTest {
         StorefrontCouponVm mine = asUser("lister", this::findInList).apply(coupon.getId());
         assertEquals(2, mine.issuedCount());
         assertTrue(mine.claimed());
+        assertEquals(CouponClaimStatusVm.Status.ISSUED, mine.issueStatus());
 
         SecurityContextHolder.clearContext();
         StorefrontCouponVm anonymous = findInList(coupon.getId());
@@ -296,6 +337,16 @@ class RedisCouponIssueIntegrationTest {
 
     private boolean issuedInMysql(Long promotionId, String userId) {
         return promotionIssueRepository.findByPromotion_IdAndUserId(promotionId, userId).isPresent();
+    }
+
+    /** Users queued on the shared issue stream for this coupon, oldest first. */
+    private List<String> queuedUsers(Promotion coupon) {
+        List<MapRecord<String, Object, Object>> records =
+                redisTemplate.opsForStream().range(CouponStockStore.ISSUE_STREAM, Range.unbounded());
+        return records == null ? List.of() : records.stream()
+                .filter(r -> String.valueOf(coupon.getId()).equals(r.getValue().get("promotionId")))
+                .map(r -> (String) r.getValue().get("userId"))
+                .toList();
     }
 
     private String stock(Promotion coupon) {
