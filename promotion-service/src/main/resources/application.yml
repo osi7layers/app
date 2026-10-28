@@ -47,13 +47,15 @@ spring:
 promotion:
   issue:
     # redis: stock is decremented in Redis, only winners write to MySQL.
+    # redis-async: stock is decremented in Redis, winners are queued on a Redis Stream and
+    #   written to MySQL by a worker; the claim answers 202 and the caller polls its status.
     # db: the previous MySQL-only path (conditional UPDATE on the promotion row).
     store: ${PROMOTION_ISSUE_STORE:redis}
     # Each pod caches a coupon's open window and total for this long instead of reading it per claim.
     window-cache-ttl: ${PROMOTION_ISSUE_WINDOW_CACHE_TTL:3s}
-    # Redis store only: how often promotion.issued_count is caught up with promotion_issue.
+    # Redis stores only: how often promotion.issued_count is caught up with promotion_issue.
     count-sync-interval: ${PROMOTION_ISSUE_COUNT_SYNC_INTERVAL:5s}
-    # Redis store only: a claim with no MySQL row after this long is given back
+    # redis store only: a claim with no MySQL row after this long is given back
     # (longer than a claim can take, including a 30s wait for a DB connection).
     stale-claim-after: ${PROMOTION_ISSUE_STALE_CLAIM_AFTER:60s}
 ---

@@ -61,7 +61,7 @@ public class PromotionIssueService {
     public PromotionIssueVm issue(Long promotionId) {
         String userId = AuthenticationUtils.requireUserId();
         Instant now = Instant.now();
-        return properties.getStore() == PromotionIssueProperties.Store.REDIS
+        return properties.usesRedis()
                 ? issueWithRedis(promotionId, userId, now)
                 : transactionTemplate.execute(status -> issueWithDatabase(promotionId, userId, now));
     }

@@ -55,12 +55,12 @@ public class StorefrontCouponService {
     }
 
     /**
-     * With the Redis store, issued counts come from the live stock rather than issued_count,
+     * With stock in Redis, issued counts come from the live stock rather than issued_count,
      * which trails by a few seconds. Falls back to issued_count when Redis is unavailable:
      * the list is only a display, unlike claiming.
      */
     private Map<Long, Integer> liveIssuedCounts(List<Promotion> coupons) {
-        if (properties.getStore() != PromotionIssueProperties.Store.REDIS) {
+        if (!properties.usesRedis()) {
             return Map.of();
         }
         try {

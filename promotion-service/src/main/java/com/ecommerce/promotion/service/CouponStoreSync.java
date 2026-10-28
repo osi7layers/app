@@ -28,7 +28,7 @@ public class CouponStoreSync {
             return;
         }
         afterCommit(() -> {
-            if (usesRedis()) {
+            if (properties.usesRedis()) {
                 couponStockStore.prime(promotionId, issueLimit);
             }
         });
@@ -42,14 +42,10 @@ public class CouponStoreSync {
     public void deleted(Long promotionId) {
         afterCommit(() -> {
             couponWindowCache.evict(promotionId);
-            if (usesRedis()) {
+            if (properties.usesRedis()) {
                 couponStockStore.evict(promotionId);
             }
         });
-    }
-
-    private boolean usesRedis() {
-        return properties.getStore() == PromotionIssueProperties.Store.REDIS;
     }
 
     private static void afterCommit(Runnable action) {

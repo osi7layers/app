@@ -21,7 +21,7 @@ public class CouponStoreHealthIndicator implements HealthIndicator {
 
     @Override
     public Health health() {
-        if (properties.getStore() != PromotionIssueProperties.Store.REDIS) {
+        if (!properties.usesRedis()) {
             return Health.up().withDetail("store", "db").build();
         }
         try {

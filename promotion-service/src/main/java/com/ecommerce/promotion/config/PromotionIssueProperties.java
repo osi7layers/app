@@ -16,7 +16,7 @@ public class PromotionIssueProperties {
     /** How long a pod trusts its cached copy of a coupon's open window and total quantity. */
     private Duration windowCacheTtl = Duration.ofSeconds(3);
 
-    /** How often issued_count is caught up with promotion_issue when the store is Redis. */
+    /** How often issued_count is caught up with promotion_issue when stock is kept in Redis. */
     private Duration countSyncInterval = Duration.ofSeconds(5);
 
     /**
@@ -25,8 +25,15 @@ public class PromotionIssueProperties {
      */
     private Duration staleClaimAfter = Duration.ofSeconds(60);
 
+    /** Whether stock is kept in Redis (both Redis stores), so the Redis keys must be kept in step. */
+    public boolean usesRedis() {
+        return store == Store.REDIS || store == Store.REDIS_ASYNC;
+    }
+
     public enum Store {
         REDIS,
+        /** Like REDIS, but winners are queued on a Redis Stream and written to MySQL by a worker. */
+        REDIS_ASYNC,
         DB
     }
 }
