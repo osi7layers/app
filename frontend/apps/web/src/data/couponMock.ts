@@ -16,21 +16,30 @@ export interface CouponEvent {
   startDate: string; // ISO 8601, issuing opens
   endDate: string; // ISO 8601, issuing closes
   claimed: boolean; // whether the current user already has this coupon
+  issueStatus?: "PENDING" | "ISSUED" | "FAILED" | "NONE"; // async issue state; PENDING = queued, not written yet
 }
 
 // Outcome of pressing the issue button, mapped from the backend response:
 //   201                                     -> success
+//   202, then status API ISSUED             -> success
+//   202, then FAILED (or NONE 4 times)      -> failed
+//   202, then still PENDING after 30s       -> delayed
+//   202, then 401 from the status API       -> loginRequired
 //   409 promotion.coupon.already.claimed    -> alreadyClaimed
 //   409 promotion.coupon.sold.out           -> soldOut
 //   400 promotion.coupon.not.open           -> notOpen
 //   anything else (network error, 5xx)      -> error
-export type IssueResult = "success" | "alreadyClaimed" | "soldOut" | "notOpen" | "error";
+// "pending" is shown while the status API is being polled after a 202.
+export type IssueResult =
+  | "pending" | "success" | "failed" | "delayed" | "loginRequired"
+  | "alreadyClaimed" | "soldOut" | "notOpen" | "error";
 
 // What the card shows, derived from a coupon and the current time.
-export type CouponStatus = "upcoming" | "open" | "claimed" | "soldOut" | "ended";
+export type CouponStatus = "upcoming" | "open" | "pending" | "claimed" | "soldOut" | "ended";
 
 export function getCouponStatus(coupon: CouponEvent, now: number): CouponStatus {
   if (coupon.claimed) return "claimed";
+  if (coupon.issueStatus === "PENDING") return "pending";
   if (now > Date.parse(coupon.endDate)) return "ended";
   if (coupon.issuedCount >= coupon.issueLimit) return "soldOut";
   if (now < Date.parse(coupon.startDate)) return "upcoming";

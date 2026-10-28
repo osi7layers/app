@@ -120,9 +120,11 @@ export const categoryApi = {
 };
 
 // Coupon API (promotion-service 선착순 쿠폰). 목록은 로그인 없이도 되고, 토큰이 있으면 claimed 가 채워진다.
+// 발급은 201(바로 발급) 또는 202(접수, 비동기)로 답하고, 202면 issueStatus 로 결과를 조회한다.
 export const couponApi = {
   getAll: () => apiClient.get("/promotion/storefront/promotions"),
   issue: (promotionId: number) => apiClient.post(`/promotion/storefront/promotions/${promotionId}/issue`),
+  issueStatus: (promotionId: number) => apiClient.get(`/promotion/storefront/promotions/${promotionId}/issue`),
 };
 
 // Order API
