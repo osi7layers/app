@@ -10,8 +10,10 @@ import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import com.ecommerce.promotion.repository.PromotionRepository;
 import com.ecommerce.promotion.service.CouponStockStore.ClaimResult;
 import com.ecommerce.promotion.service.CouponWindowCache.CouponWindow;
+import com.ecommerce.promotion.viewmodel.CouponClaimStatusVm;
 import com.ecommerce.promotion.viewmodel.PromotionIssueVm;
 import java.time.Instant;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
@@ -27,8 +29,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li><b>redis</b> (default): a Lua script checks the claimer set and decrements the stock in
  *       one step, so claims do not queue on a row lock; only winners insert into
  *       {@code promotion_issue}. If that insert fails the claim is given back in Redis.</li>
+ *   <li><b>redis-async</b>: the same script also queues the winner on a Redis Stream and the
+ *       claim answers PENDING at once; {@link CouponIssueWorker} writes the row. See
+ *       {@link #enqueue}.</li>
  *   <li><b>db</b>: a conditional UPDATE on the promotion row, then the insert, in one
- *       transaction. Kept for comparing the two under load.</li>
+ *       transaction. Kept for comparing the stores under load.</li>
  * </ul>
  */
 @Slf4j
@@ -58,6 +63,12 @@ public class PromotionIssueService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
+    /** Whether claims are queued (redis-async) and answered with {@link #enqueue} instead of {@link #issue}. */
+    public boolean queuesIssues() {
+        return properties.getStore() == PromotionIssueProperties.Store.REDIS_ASYNC;
+    }
+
+    /** Claims and writes the coupon before answering (redis and db stores). */
     public PromotionIssueVm issue(Long promotionId) {
         String userId = AuthenticationUtils.requireUserId();
         Instant now = Instant.now();
@@ -70,20 +81,18 @@ public class PromotionIssueService {
     // redis
     // ------------------------------------------------------------------
 
+    /**
+     * redis-async: claims in Redis and queues the winner in one step, then answers PENDING
+     * without waiting for MySQL. Losers get the same errors as {@link #issue}.
+     */
+    public CouponClaimStatusVm enqueue(Long promotionId) {
+        String userId = AuthenticationUtils.requireUserId();
+        claimInRedis(openWindow(promotionId, Instant.now()), userId, couponStockStore::tryClaimAndEnqueue);
+        return CouponClaimStatusVm.pending(promotionId, properties.getStatusPollAfter().toMillis());
+    }
+
     private PromotionIssueVm issueWithRedis(Long promotionId, String userId, Instant now) {
-        CouponWindow window = couponWindowCache.get(promotionId)
-                .orElseThrow(() -> BusinessException.notFound("promotion.coupon.not.found", promotionId));
-        if (!window.isOpen(now)) {
-            throw BusinessException.of(ErrorCode.COUPON_NOT_OPEN);
-        }
-        switch (claimInRedis(window, userId)) {
-            case SOLD_OUT -> throw BusinessException.of(ErrorCode.COUPON_SOLD_OUT);
-            case ALREADY_CLAIMED -> throw BusinessException.of(ErrorCode.COUPON_ALREADY_CLAIMED);
-            case NOT_LOADED -> throw BusinessException.of(ErrorCode.COUPON_STORE_UNAVAILABLE);
-            case CLAIMED -> {
-                // fall through to the MySQL write below
-            }
-        }
+        claimInRedis(openWindow(promotionId, now), userId, couponStockStore::tryClaim);
         PromotionIssueVm issued;
         try {
             issued = transactionTemplate.execute(status -> save(promotionId, userId, now));
@@ -108,14 +117,31 @@ public class PromotionIssueService {
         return issued;
     }
 
-    private ClaimResult claimInRedis(CouponWindow window, String userId) {
-        Long promotionId = window.promotionId();
-        ClaimResult result = redisCall(() -> couponStockStore.tryClaim(promotionId, userId));
-        if (result != ClaimResult.NOT_LOADED) {
-            return result;
+    private CouponWindow openWindow(Long promotionId, Instant now) {
+        CouponWindow window = couponWindowCache.get(promotionId)
+                .orElseThrow(() -> BusinessException.notFound("promotion.coupon.not.found", promotionId));
+        if (!window.isOpen(now)) {
+            throw BusinessException.of(ErrorCode.COUPON_NOT_OPEN);
         }
-        boolean loaded = redisCall(() -> couponStockStore.loadIfAbsent(promotionId, window.issueLimit()));
-        return loaded ? redisCall(() -> couponStockStore.tryClaim(promotionId, userId)) : ClaimResult.NOT_LOADED;
+        return window;
+    }
+
+    /** Runs the claim script, rebuilding the keys from MySQL first if needed; throws unless claimed. */
+    private void claimInRedis(CouponWindow window, String userId, BiFunction<Long, String, ClaimResult> claim) {
+        Long promotionId = window.promotionId();
+        ClaimResult result = redisCall(() -> claim.apply(promotionId, userId));
+        if (result == ClaimResult.NOT_LOADED) {
+            boolean loaded = redisCall(() -> couponStockStore.loadIfAbsent(promotionId, window.issueLimit()));
+            result = loaded ? redisCall(() -> claim.apply(promotionId, userId)) : ClaimResult.NOT_LOADED;
+        }
+        switch (result) {
+            case SOLD_OUT -> throw BusinessException.of(ErrorCode.COUPON_SOLD_OUT);
+            case ALREADY_CLAIMED -> throw BusinessException.of(ErrorCode.COUPON_ALREADY_CLAIMED);
+            case NOT_LOADED -> throw BusinessException.of(ErrorCode.COUPON_STORE_UNAVAILABLE);
+            case CLAIMED -> {
+                // the caller writes or has queued the row
+            }
+        }
     }
 
     private void undoClaim(Long promotionId, String userId, boolean forgetUser) {

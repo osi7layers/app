@@ -58,6 +58,8 @@ promotion:
     # redis store only: a claim with no MySQL row after this long is given back
     # (longer than a claim can take, including a 30s wait for a DB connection).
     stale-claim-after: ${PROMOTION_ISSUE_STALE_CLAIM_AFTER:60s}
+    # redis-async only: how long a caller with a PENDING claim is told to wait before polling.
+    status-poll-after: ${PROMOTION_ISSUE_STATUS_POLL_AFTER:1s}
     # redis-async only: queued winners written per MySQL transaction, and the wait when the queue is empty.
     worker-batch-size: ${PROMOTION_ISSUE_WORKER_BATCH_SIZE:100}
     worker-poll-interval: ${PROMOTION_ISSUE_WORKER_POLL_INTERVAL:200ms}

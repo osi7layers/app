@@ -3,8 +3,10 @@ package com.ecommerce.promotion.service;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ecommerce.commonlib.exception.BusinessException;
 import com.ecommerce.promotion.model.Promotion;
 import com.ecommerce.promotion.model.PromotionIssue;
 import com.ecommerce.promotion.model.enumeration.ApplyTo;
@@ -13,12 +15,21 @@ import com.ecommerce.promotion.model.enumeration.UsageType;
 import com.ecommerce.promotion.repository.PromotionIssueRepository;
 import com.ecommerce.promotion.repository.PromotionRepository;
 import com.ecommerce.promotion.service.CouponStockStore.ClaimResult;
+import com.ecommerce.promotion.viewmodel.CouponClaimStatusVm;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,6 +40,9 @@ import org.springframework.data.redis.connection.stream.StreamInfo.XInfoConsumer
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -58,6 +72,8 @@ class RedisAsyncCouponIssueIntegrationTest {
     static GenericContainer<?> redis = new GenericContainer<>("redis:7.4-alpine").withExposedPorts(6379);
 
     @Autowired
+    private PromotionIssueService issueService;
+    @Autowired
     private CouponStockStore couponStockStore;
     @Autowired
     private PromotionRepository promotionRepository;
@@ -65,6 +81,37 @@ class RedisAsyncCouponIssueIntegrationTest {
     private PromotionIssueRepository promotionIssueRepository;
     @Autowired
     private StringRedisTemplate redisTemplate;
+
+    @AfterEach
+    void clearSecurity() {
+        SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void queuedClaimsNeverIssueMoreThanTheLimitUnderConcurrency() throws Exception {
+        Promotion coupon = openCoupon(50);
+
+        List<String> outcomes = enqueueConcurrently(coupon.getId(), 300);
+
+        Map<String, Long> counts = outcomes.stream().collect(Collectors.groupingBy(o -> o, Collectors.counting()));
+        assertEquals(50, counts.get("PENDING"));
+        assertEquals(250, counts.get("PRM-6002"));
+        await().atMost(WAIT).until(() -> issuedUsers(coupon).size() == 50
+                && queuedUsers(coupon).isEmpty() && pendingCount(coupon) == 0);
+        assertEquals("0", stock(coupon));
+    }
+
+    @Test
+    void queuedClaimByTheSameUserIsRefused() {
+        Promotion coupon = openCoupon(5);
+
+        assertEquals(CouponClaimStatusVm.Status.PENDING, asUser("twice", () -> issueService.enqueue(coupon.getId())).status());
+        BusinessException again = assertThrows(BusinessException.class,
+                () -> asUser("twice", () -> issueService.enqueue(coupon.getId())));
+
+        assertEquals("PRM-6003", again.getErrorCode());
+        await().atMost(WAIT).until(() -> issuedUsers(coupon).equals(List.of("twice")));
+    }
 
     @Test
     void workerWritesQueuedWinnersToMysql() {
@@ -138,6 +185,40 @@ class RedisAsyncCouponIssueIntegrationTest {
     }
 
     // ------------------------------------------------------------------
+
+    private List<String> enqueueConcurrently(Long promotionId, int requests) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(64);
+        try {
+            List<Callable<String>> tasks = new ArrayList<>();
+            for (int i = 0; i < requests; i++) {
+                String userId = "async-user-" + i;
+                tasks.add(() -> {
+                    try {
+                        return asUser(userId, () -> issueService.enqueue(promotionId)).status().name();
+                    } catch (BusinessException e) {
+                        return e.getErrorCode();
+                    }
+                });
+            }
+            List<String> outcomes = new ArrayList<>();
+            for (Future<String> f : pool.invokeAll(tasks)) {
+                outcomes.add(f.get());
+            }
+            return outcomes;
+        } finally {
+            pool.shutdown();
+        }
+    }
+
+    private static <T> T asUser(String userId, Supplier<T> action) {
+        Jwt jwt = Jwt.withTokenValue("t").header("alg", "none").subject(userId).build();
+        SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
+        try {
+            return action.get();
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
 
     private Promotion openCoupon(int issueLimit) {
         Instant now = Instant.now();

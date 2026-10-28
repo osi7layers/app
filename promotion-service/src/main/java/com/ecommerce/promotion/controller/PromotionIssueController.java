@@ -3,7 +3,6 @@ package com.ecommerce.promotion.controller;
 import com.ecommerce.commonlib.viewmodel.ApiResponse;
 import com.ecommerce.promotion.service.PromotionIssueService;
 import com.ecommerce.promotion.service.StorefrontCouponService;
-import com.ecommerce.promotion.viewmodel.PromotionIssueVm;
 import com.ecommerce.promotion.viewmodel.StorefrontCouponVm;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +26,15 @@ public class PromotionIssueController {
         return ApiResponse.ok(storefrontCouponService.listCoupons());
     }
 
+    /**
+     * 201 with the issued coupon (redis, db), or 202 PENDING when the claim is queued
+     * (redis-async): the caller then polls the claim status.
+     */
     @PostMapping("/storefront/promotions/{promotionId}/issue")
-    public ResponseEntity<PromotionIssueVm> issue(@PathVariable Long promotionId) {
+    public ResponseEntity<?> issue(@PathVariable Long promotionId) {
+        if (promotionIssueService.queuesIssues()) {
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(promotionIssueService.enqueue(promotionId));
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(promotionIssueService.issue(promotionId));
     }
 }

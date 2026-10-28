@@ -25,6 +25,9 @@ public class PromotionIssueProperties {
      */
     private Duration staleClaimAfter = Duration.ofSeconds(60);
 
+    /** redis-async only: how long a caller with a PENDING claim waits before polling its status. */
+    private Duration statusPollAfter = Duration.ofSeconds(1);
+
     /** redis-async only: how many queued winners the worker writes to MySQL in one transaction. */
     private int workerBatchSize = 100;
 
