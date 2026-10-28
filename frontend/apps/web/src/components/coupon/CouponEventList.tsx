@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { TicketX } from "lucide-react";
 import { EmptyState, LoadingSkeleton } from "@ecommerce/ui";
@@ -25,6 +25,12 @@ export default function CouponEventList() {
   const { data: coupons, isLoading, isError } = useCoupons();
   const issue = useIssueCoupon();
   const [notice, setNotice] = useState<Notice | null>(null);
+  // 202 를 받아 결과를 기다리는 쿠폰. 그 카드만 "처리 중"으로 보여 준다.
+  const [pendingId, setPendingId] = useState<number | null>(null);
+
+  // 쿠폰 화면을 떠나면 진행 중인 상태 조회를 멈춘다.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   // Ticking clock for countdowns and open/close transitions. It starts as null
   // and is set after mount so server and client render the same markup.
@@ -42,10 +48,29 @@ export default function CouponEventList() {
       return;
     }
     setNotice(null);
-    issue.mutate(coupon.promotionId, {
-      onSuccess: (result) => setNotice({ result, coupon }),
-      onError: () => setNotice({ result: "error", coupon }),
-    });
+    setPendingId(null);
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const finish = (result: IssueResult) => {
+      if (controller.signal.aborted) return;
+      setPendingId(null);
+      setNotice({ result, coupon });
+    };
+    issue.mutate(
+      {
+        promotionId: coupon.promotionId,
+        onPending: () => {
+          setPendingId(coupon.promotionId);
+          setNotice({ result: "pending", coupon });
+        },
+        signal: controller.signal,
+      },
+      {
+        onSuccess: finish,
+        onError: () => finish("error"),
+      },
+    );
   };
 
   const nextOpenAt =
@@ -65,6 +90,7 @@ export default function CouponEventList() {
           result={notice.result}
           couponName={notice.coupon.name}
           onRetry={() => handleIssue(notice.coupon)}
+          onLogin={() => router.push("/login?redirect=/coupons")}
           onDismiss={() => setNotice(null)}
         />
       )}
@@ -85,9 +111,9 @@ export default function CouponEventList() {
             <CouponCard
               key={coupon.promotionId}
               coupon={coupon}
-              status={getCouponStatus(coupon, now)}
+              status={pendingId === coupon.promotionId ? "pending" : getCouponStatus(coupon, now)}
               now={now}
-              issuing={issue.isPending && issue.variables === coupon.promotionId}
+              issuing={issue.isPending && issue.variables?.promotionId === coupon.promotionId}
               onIssue={handleIssue}
               featured={coupons.length === 1}
             />

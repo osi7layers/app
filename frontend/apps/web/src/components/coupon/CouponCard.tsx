@@ -11,6 +11,7 @@ import { couponStyles as s } from "./coupon.styles";
 const BADGE: Record<CouponStatus, { variant: "default" | "success" | "danger" | "info"; key: string }> = {
   open: { variant: "danger", key: "statusOpen" },
   upcoming: { variant: "info", key: "statusUpcoming" },
+  pending: { variant: "info", key: "statusPending" },
   claimed: { variant: "success", key: "statusClaimed" },
   soldOut: { variant: "default", key: "statusSoldOut" },
   ended: { variant: "default", key: "statusEnded" },
@@ -97,6 +98,12 @@ function CouponAction({ coupon, status, now, issuing, onIssue, featured = false 
       return (
         <Button size={size} variant="outline" className={action} disabled>
           {t("actionUpcoming", { countdown: formatCountdown(Date.parse(coupon.startDate) - now) })}
+        </Button>
+      );
+    case "pending":
+      return (
+        <Button size={size} variant="outline" className={action} loading disabled>
+          {t("statusPending")}
         </Button>
       );
     case "claimed":
