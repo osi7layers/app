@@ -53,6 +53,10 @@ public final class Order extends AbstractMappedEntity {
     @Column(name = "product_id")
     private Integer productId;
 
+    // Keycloak subject of the user who placed the order.
+    @Column(name = "user_id")
+    private String userId;
+
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "cart_id")
     private Cart cart;
