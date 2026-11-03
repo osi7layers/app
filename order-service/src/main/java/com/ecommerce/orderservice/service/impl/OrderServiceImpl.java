@@ -1,8 +1,11 @@
 package com.ecommerce.orderservice.service.impl;
 
+import com.ecommerce.commonlib.security.AuthenticationUtils;
 import com.ecommerce.orderservice.dto.order.OrderDto;
+import com.ecommerce.orderservice.dto.product.ProductDto;
 import com.ecommerce.orderservice.dto.promotion.UnusedPromotionIssueResponse;
 import com.ecommerce.orderservice.exception.wrapper.OrderNotFoundException;
+import com.ecommerce.orderservice.entity.Order;
 import com.ecommerce.orderservice.helper.OrderMappingHelper;
 import com.ecommerce.orderservice.repository.OrderRepository;
 import com.ecommerce.orderservice.security.JwtTokenFilter;
@@ -11,19 +14,23 @@ import com.ecommerce.orderservice.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import org.modelmapper.ModelMapper;
 import org.springframework.data.domain.*;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RequiredArgsConstructor
 @Service
 public class OrderServiceImpl implements OrderService {
 
     private static final Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
+    private static final String ADMIN = "ADMIN";
 
     private final OrderRepository orderRepository;
     private final ModelMapper modelMapper;
@@ -31,38 +38,31 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     public List<OrderDto> findAll() {
-        log.info("OrderDto List, service; fetch all orders");
-        return orderRepository.findAll()
-                .stream()
+        log.info("OrderDto List, service; fetch orders of current user (all for admin)");
+        List<Order> orders = isAdmin()
+                ? orderRepository.findAll()
+                : orderRepository.findByUserId(AuthenticationUtils.requireUserId());
+        List<OrderDto> orderDtos = orders.stream()
                 .map(OrderMappingHelper::map)
-                .peek(orderDto -> {
-                    try {
-                        orderDto.setProductDto(callAPI.receiverProductDto(orderDto.getProductId()));
-                    } catch (Exception e) {
-                        log.error("Error fetching product info: {}", e.getMessage());
-                    }
-                })
                 .toList();
+        attachProducts(orderDtos);
+        return orderDtos;
     }
 
     @Override
     public Page<OrderDto> findAll(int page, int size, String sortBy, String sortOrder) {
-        log.info("OrderDto List, service; fetch all orders with paging and sorting");
+        log.info("OrderDto List, service; fetch orders of current user (all for admin) with paging and sorting");
         Sort sort = Sort.by(Sort.Direction.fromString(sortOrder), sortBy);
         Pageable pageable = PageRequest.of(page, size, sort);
 
-        List<OrderDto> orderDtos = orderRepository.findAll(pageable)
-                .stream()
+        Page<Order> orders = isAdmin()
+                ? orderRepository.findAll(pageable)
+                : orderRepository.findByUserId(AuthenticationUtils.requireUserId(), pageable);
+        List<OrderDto> orderDtos = orders.stream()
                 .map(OrderMappingHelper::map)
-                .peek(orderDto -> {
-                    try {
-                        orderDto.setProductDto(callAPI.receiverProductDto(orderDto.getProductId()));
-                    } catch (Exception e) {
-                        log.error("Error fetching product info: {}", e.getMessage());
-                    }
-                })
                 .toList();
-        return new PageImpl<>(orderDtos, pageable, orderDtos.size());
+        attachProducts(orderDtos);
+        return new PageImpl<>(orderDtos, pageable, orders.getTotalElements());
     }
 
     @Override
@@ -88,13 +88,17 @@ public class OrderServiceImpl implements OrderService {
     public OrderDto save(OrderDto orderDto) {
         log.info("OrderDto, service; save order");
         applyCoupon(orderDto);
-        return OrderMappingHelper.map(orderRepository.save(OrderMappingHelper.map(orderDto)));
+        Order order = OrderMappingHelper.map(orderDto);
+        order.setUserId(AuthenticationUtils.requireUserId());
+        return OrderMappingHelper.map(orderRepository.save(order));
     }
 
     @Override
     public OrderDto update(OrderDto orderDto) {
         log.info("OrderDto, service; update order");
-        return OrderMappingHelper.map(orderRepository.save(OrderMappingHelper.map(orderDto)));
+        Order order = OrderMappingHelper.map(orderDto);
+        order.setUserId(ownerOf(orderDto.getOrderId()));
+        return OrderMappingHelper.map(orderRepository.save(order));
     }
 
     @Override
@@ -102,13 +106,55 @@ public class OrderServiceImpl implements OrderService {
         log.info("OrderDto, service; update order with orderId");
         OrderDto existingOrderDto = findById(orderId);
         modelMapper.map(orderDto, existingOrderDto);
-        return OrderMappingHelper.map(orderRepository.save(OrderMappingHelper.map(existingOrderDto)));
+        Order order = OrderMappingHelper.map(existingOrderDto);
+        order.setUserId(ownerOf(orderId));
+        return OrderMappingHelper.map(orderRepository.save(order));
     }
 
     @Override
     public void deleteById(Integer orderId) {
         log.info("Void, service; delete order by id");
         orderRepository.deleteById(orderId);
+    }
+
+    private static boolean isAdmin() {
+        Authentication auth = AuthenticationUtils.getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(authority -> ADMIN.equals(authority.getAuthority()));
+    }
+
+    // The owner is never taken from the request body, so updates keep the stored value.
+    private String ownerOf(Integer orderId) {
+        if (orderId == null) {
+            return null;
+        }
+        return orderRepository.findById(orderId)
+                .map(Order::getUserId)
+                .orElse(null);
+    }
+
+    // Fetch each product once per request; many orders share the same product.
+    private void attachProducts(List<OrderDto> orderDtos) {
+        Map<Integer, ProductDto> products = new HashMap<>();
+        for (OrderDto orderDto : orderDtos) {
+            Integer productId = orderDto.getProductId();
+            if (productId == null) {
+                continue;
+            }
+            if (!products.containsKey(productId)) {
+                products.put(productId, fetchProduct(productId));
+            }
+            orderDto.setProductDto(products.get(productId));
+        }
+    }
+
+    private ProductDto fetchProduct(Integer productId) {
+        try {
+            return callAPI.receiverProductDto(productId);
+        } catch (Exception e) {
+            log.error("Error fetching product info: {}", e.getMessage());
+            return null;
+        }
     }
 
     private void applyCoupon(OrderDto orderDto) {

@@ -221,7 +221,7 @@ public class ApiExceptionHandler {
         if (withStack) {
             log.error(ERROR_LOG_FORMAT, path, status.value(), code, message, root.getMessage(), ex);
         } else {
-            log.warn(ERROR_LOG_FORMAT, path, status.value(), code, message, root.getMessage(), ex);
+            log.warn(ERROR_LOG_FORMAT, path, status.value(), code, message, root.getMessage());
         }
         ApiResponse<Void> body = errors == null
                 ? ApiResponse.error(code, message, path)
